@@ -1,0 +1,5 @@
+{
+  "name": "kestrel",
+  "version": "0.1.0",
+  "description": "Review the design, not the code: the dev flow over a generated map (gen, packet, approve, check, stamp) and its cards."
+}
