@@ -1,6 +1,7 @@
 /** `kestrel.json` at the repo root: which layers run and where their inputs are. */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
-import { todo } from "./todo.js";
 
 export const LAYER_IDS = ["imports", "api", "routes", "schema", "systems"] as const;
 export type LayerId = (typeof LAYER_IDS)[number];
@@ -54,5 +55,6 @@ export type Config = z.infer<typeof Config>;
 
 /** Reads and checks `kestrel.json` under `root`. */
 export async function loadConfig(root: string): Promise<Config> {
-  return todo(root);
+  const text = await readFile(join(root, "kestrel.json"), "utf8");
+  return Config.parse(JSON.parse(text));
 }
