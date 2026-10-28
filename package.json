@@ -1,7 +1,7 @@
 {
   "name": "@wrenautomation/kestrel",
   "version": "0.0.0",
-  "description": "Review the design, not the code. Generates a repo's structure (imports, interfaces, schema, systems) into files in git, diffs it against what you approved, and fails the gate on drift.",
+  "description": "Review the design, not the code. Generates a repo's structure (imports, interfaces, schema, systems) into files in git, diffs it against what you approved, and shows the drift.",
   "license": "PolyForm-Shield-1.0.0",
   "type": "module",
   "files": [

@@ -6,6 +6,7 @@
  * kestrel stamp <card...>     mark cards read against the approved graph
  * kestrel view                the map as a local page: zoom, details, drift, notes
  * kestrel health              signals: cycles, flat folders, fan, weak interfaces, clones, unused
+ * kestrel packet [layer...]   what the last gen changes against approved, as one page
  * kestrel cost                spend per node, from the repo's dump; local only, never committed
  */
 import { execFile } from "node:child_process";
@@ -38,6 +39,7 @@ import { byGroup } from "./graph.js";
 import { fromGraphs, page as healthPage, runTools } from "./health.js";
 import { LAYERS } from "./layers/index.js";
 import { seams } from "./layers/systems.js";
+import { packet } from "./packet.js";
 import { fileStore } from "./store.js";
 import { buildView } from "./view/build.js";
 import { serve } from "./view/serve.js";
@@ -287,6 +289,34 @@ export function program(): Command {
             (h.duplicates ? `, ${h.duplicates.percent}% duplicated` : "") +
             (h.unused ? `, ${h.unused.exports.length} unused exports` : ""),
         );
+    });
+  p.command("packet")
+    .argument("[layers...]")
+    .description("write what the last gen changes against the approved map, as one page")
+    .option("-o, --out <file>", "write the page here, not to stdout")
+    .action(async (args: string[], o: { out?: string }) => {
+      const r = root();
+      const config = await loadConfig(r, cfg().config);
+      const store = fileStore(r, config.out);
+      const ids = chosen(config, layerArgs(args));
+      const layers = await Promise.all(
+        ids.map(async (id) => ({
+          id,
+          approved: await store.read(id, "approved"),
+          current: await store.read(id, "current"),
+        })),
+      );
+      const graphs = (k: "approved" | "current") =>
+        layers.map((l) => l[k]).filter((g) => g !== null);
+      const page = packet({
+        layers,
+        cards: config.cards ? await readCards(r, config.cards.dir) : [],
+        was: indexOf(graphs("approved")),
+        now: indexOf(graphs("current")),
+        measures: await measures(r, config.out),
+      });
+      if (o.out) await writeFile(resolve(r, o.out), page);
+      else process.stdout.write(page);
     });
   p.command("cost")
     .description("write the cost report from the repo's dump; local only, never commit it")
