@@ -4,18 +4,12 @@
  * edges too, marked `type: true`: a type still couples two files.
  */
 import { existsSync } from "node:fs";
-import { glob, readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { cruise } from "dependency-cruiser";
 import extractTSConfig from "dependency-cruiser/config-utl/extract-ts-config";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
-
-interface Pkg {
-  name: string;
-  /** Repo-relative, with a trailing `/`. */
-  dir: string;
-}
+import { type Pkg, packages } from "./workspace.js";
 
 interface CruiseModule {
   source: string;
@@ -26,18 +20,6 @@ interface CruiseModule {
     coreModule: boolean;
     dependencyTypes: string[];
   }[];
-}
-
-async function packages(root: string, globs: string[]): Promise<Pkg[]> {
-  const out: Pkg[] = [];
-  for await (const dir of glob(globs, { cwd: root })) {
-    const file = join(root, dir, "package.json");
-    if (dir.includes("node_modules") || !existsSync(file)) continue;
-    const { name } = JSON.parse(await readFile(file, "utf8")) as { name?: string };
-    out.push({ name: name ?? dir, dir: `${dir}/` });
-  }
-  // Longest dir first, so a nested package wins over its parent.
-  return out.sort((a, b) => b.dir.length - a.dir.length);
 }
 
 /** `react-dom/client` → `react-dom`; `@scope/x/y` → `@scope/x`. */
