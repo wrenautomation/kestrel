@@ -57,6 +57,22 @@ const Ui = z.object({
     .default(["packages/*/src/**/*.stories.tsx", "apps/*/web/src/**/*.stories.tsx"]),
 });
 
+const Health = z.object({
+  /** Folders jscpd reads. */
+  paths: z.array(z.string()).default(["packages", "apps"]),
+  ignore: z
+    .array(z.string())
+    .default([
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/storybook-static/**",
+      "**/test/**",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.stories.tsx",
+    ]),
+});
+
 const Cards = z.object({
   dir: z.string().default("map"),
   /** Roles that must each have a card. */
@@ -76,6 +92,7 @@ export const Config = z.object({
     })
     .default({}),
   cards: Cards.optional(),
+  health: Health.default(Health.parse({})),
 });
 export type Config = z.infer<typeof Config>;
 

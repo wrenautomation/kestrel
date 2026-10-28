@@ -5,6 +5,7 @@
  * kestrel approve [layer...]  current → approved for the whole map (commit it: that is the approval)
  * kestrel stamp <card...>     mark cards read against the approved graph
  * kestrel view                the map as a local page: zoom, details, drift, notes
+ * kestrel health              signals: cycles, flat folders, fan, weak interfaces, clones, unused
  */
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -23,6 +24,7 @@ import {
 import { type Config, LAYER_IDS, type LayerId, loadConfig } from "./config.js";
 import { diff, formatChanges } from "./diff.js";
 import { byGroup } from "./graph.js";
+import { fromGraphs, page as healthPage, runTools } from "./health.js";
 import { LAYERS } from "./layers/index.js";
 import { seams } from "./layers/systems.js";
 import { fileStore } from "./store.js";
@@ -202,6 +204,29 @@ export function program(): Command {
     .argument("<cards...>")
     .description("mark cards read against the approved map")
     .action(async (cards: string[]) => stamp(root(), cards, cfg().config));
+  p.command("health")
+    .description("write the health report; run it under the repo's check lock")
+    .option("--no-tools", "graph signals only, no jscpd or knip")
+    .option("--json", "print the report as JSON")
+    .action(async (o: { tools: boolean; json?: boolean }) => {
+      const r = root();
+      const config = await loadConfig(r, cfg().config);
+      const store = fileStore(r, config.out);
+      const h = {
+        ...fromGraphs(await store.read("imports", "current"), await store.read("api", "current")),
+        ...(o.tools ? await runTools(r, config.health) : {}),
+      };
+      const dir = resolve(r, config.out);
+      await writeFile(resolve(dir, "health.current.json"), `${JSON.stringify(h, null, 2)}\n`);
+      await writeFile(resolve(dir, "health.md"), healthPage(h));
+      if (o.json) console.log(JSON.stringify(h));
+      else
+        console.log(
+          `health: ${h.cycles.length} file cycles, ${h.flat.length} flat folders` +
+            (h.duplicates ? `, ${h.duplicates.percent}% duplicated` : "") +
+            (h.unused ? `, ${h.unused.exports.length} unused exports` : ""),
+        );
+    });
   p.command("view")
     .description("open the map as a local page")
     .option("-p, --port <n>", "port", "4610")
