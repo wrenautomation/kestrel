@@ -16,6 +16,7 @@
   --l3: #3d78b8;
   --l4: #a8741c;
   --l5: #5f7d2a;
+  --l6: #b4603a;
   --hair: color-mix(in srgb, var(--ink) 11%, transparent);
   --fill: color-mix(in srgb, var(--ink) 5%, transparent);
   --tint: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -45,6 +46,7 @@
     --l3: #7fb0e6;
     --l4: #e0b05a;
     --l5: #a8c66a;
+    --l6: #e8956c;
     --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
     color-scheme: dark;
   }
@@ -66,6 +68,7 @@
   --l3: #7fb0e6;
   --l4: #e0b05a;
   --l5: #a8c66a;
+  --l6: #e8956c;
   --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
   color-scheme: dark;
 }
@@ -348,6 +351,11 @@ code {
 .role-system,
 .role-part {
   --c: var(--l5);
+}
+.role-screens,
+.role-app,
+.role-screen {
+  --c: var(--l6);
 }
 
 .line {

@@ -23,7 +23,9 @@ export const ROLES = [
   "schema",
   "table",
   "index",
+  "app",
   "screen",
+  "story",
 ] as const;
 export type Role = (typeof ROLES)[number];
 

@@ -5,6 +5,7 @@ import type { Layer } from "./layer.js";
 import { routes } from "./routes.js";
 import { schema } from "./schema.js";
 import { systems } from "./systems.js";
+import { ui } from "./ui.js";
 
-export const LAYERS: Record<LayerId, Layer> = { imports, api, routes, schema, systems };
+export const LAYERS: Record<LayerId, Layer> = { imports, api, routes, schema, systems, ui };
 export type { Layer, LayerContext } from "./layer.js";

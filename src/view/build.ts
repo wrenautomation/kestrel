@@ -1,6 +1,7 @@
 /**
  * Every layer's graph → one tree to zoom (repo → top folder → package → source folder → file,
- * repo → database → schema → table, and repo → systems → system → part), each level laid out once with ELK. Exports and routes are not boxes: they sit in their file's
+ * repo → database → schema → table, repo → systems → system → part, and repo → screens → app →
+ * screen), each level laid out once with ELK. Exports and routes are not boxes: they sit in their file's
  * detail, so a level stays a readable dependency graph.
  */
 import { createHash } from "node:crypto";
@@ -19,6 +20,7 @@ import type {
   Link,
   Path,
   Service,
+  StoryRef,
   TreeNode,
   ViewData,
 } from "./types.js";
@@ -38,7 +40,7 @@ export interface ViewInput {
 }
 
 /** Bump when `place` changes: the cache key is its input, not its code. */
-const LAYOUT_VERSION = 2;
+const LAYOUT_VERSION = 4;
 
 /** Over this many boxes a layered graph is a hairball, and ELK takes seconds. */
 export const GRID_OVER = 40;
@@ -127,6 +129,17 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
   for (const n of imports?.nodes ?? [])
     if (n.role === "file" && n.parent) fileBox(n.parent, n.id.slice(n.parent.length + 1));
 
+  const many = (k: number, what: string) => `${k} ${what}${k === 1 ? "" : "s"}`;
+  /** Repo paths → the boxes the map has already: a package by its dir, or a file. Never a new one. */
+  const paths = (v: unknown): Path[] =>
+    (Array.isArray(v) ? (v as string[]) : []).map((path) => {
+      const pkg = dirs.find(([, d]) => d === `${path.replace(/\/$/, "")}/`)?.[0];
+      const hit = dirs.find(([, d]) => d && path.startsWith(d));
+      const file = hit && `${hit[0]}/${path.slice(hit[1].length)}`;
+      const box = pkg ?? (file && nodes[file] ? file : undefined);
+      return box ? { path, box } : { path };
+    });
+
   // The database: a box per schema and per table; indexes and migrations are detail, not boxes.
   const schema = input.current.schema;
   const tables = (schema?.nodes ?? []).filter((n) => n.role === "table");
@@ -192,21 +205,11 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
       });
       detail(n.id).attrs = n.attrs ?? {};
     }
-    const many = (k: number, what: string) => `${k} ${what}${k === 1 ? "" : "s"}`;
     (nodes[SYS] as TreeNode).sub = many(nodes[SYS]?.kids.length ?? 0, "system");
     for (const n of sys.nodes) {
       const b = nodes[n.id] as TreeNode;
       if (b.kids.length) b.sub = many(b.kids.length, "part");
     }
-    const paths = (v: unknown): Path[] =>
-      (Array.isArray(v) ? (v as string[]) : []).map((path) => {
-        // A box the map has already: a package by its dir, or a file. Never a new one.
-        const pkg = dirs.find(([, d]) => d === `${path.replace(/\/$/, "")}/`)?.[0];
-        const hit = dirs.find(([, d]) => d && path.startsWith(d));
-        const file = hit && `${hit[0]}/${path.slice(hit[1].length)}`;
-        const box = pkg ?? (file && nodes[file] ? file : undefined);
-        return box ? { path, box } : { path };
-      });
     for (const n of sys.nodes) {
       const code = paths(n.attrs?.code);
       if (code.length) detail(n.id).code = code;
@@ -222,6 +225,80 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
 
   // Exports and services into their file's detail.
   const index: ViewData["index"] = [];
+
+  // The screens: a box per app and per page in tab order; a page's file and a story list each
+  // other in that file's detail.
+  const ui = input.current.ui;
+  const UI = "ui:";
+  const apps = (ui?.nodes ?? []).filter((n) => n.role === "app");
+  if (apps.length) {
+    add({ id: UI, label: "screens", role: "screens", parent: repo, kids: [], files: 0 });
+    // Two apps can share a name, one per workspace: each label says which.
+    const names = new Map<string, number>();
+    for (const a of apps)
+      names.set(String(a.attrs?.name), (names.get(String(a.attrs?.name)) ?? 0) + 1);
+    for (const [i, a] of apps.entries()) {
+      const name = String(a.attrs?.name ?? a.id.slice(UI.length));
+      const twin = (names.get(name) ?? 0) > 1;
+      add({
+        id: a.id,
+        label: twin ? `${name} · ${a.attrs?.workspace === "wren" ? "Wren" : "client"}` : name,
+        role: "app",
+        parent: UI,
+        kids: [],
+        files: 0,
+        order: i,
+      });
+      detail(a.id).attrs = a.attrs ?? {};
+      const code = paths(a.attrs?.file ? [a.attrs.file] : []);
+      if (code.length) detail(a.id).code = code;
+      index.push({ name: String(a.attrs?.name), kind: "app", box: a.id });
+    }
+    for (const n of ui?.nodes ?? []) {
+      if (n.role !== "screen" || !n.parent || !nodes[n.parent]) continue;
+      const a = n.attrs ?? {};
+      add({
+        id: n.id,
+        label: String(a.label),
+        role: "screen",
+        parent: n.parent,
+        kids: [],
+        files: 0,
+        sub: a.record ? `${a.template} of ${a.record}` : String(a.template),
+        order: Number(a.order),
+      });
+      detail(n.id).attrs = a;
+      const code = paths(a.file ? [a.file] : []);
+      if (code.length) detail(n.id).code = code;
+      for (const p of code) {
+        if (!p.box) continue;
+        const d = detail(p.box);
+        d.screens = [...(d.screens ?? []), n.id];
+      }
+      index.push({ name: String(a.label), kind: "screen", box: n.id });
+    }
+    (nodes[UI] as TreeNode).sub = many(apps.length, "app");
+    for (const a of apps) {
+      const b = nodes[a.id] as TreeNode;
+      b.sub = many(b.kids.length, "page");
+    }
+    for (const n of ui?.nodes ?? []) {
+      if (n.role !== "story") continue;
+      const story: StoryRef = {
+        id: n.id,
+        title: String(n.attrs?.title),
+        file: String(n.attrs?.file),
+      };
+      const own = paths([story.file])[0]?.box;
+      if (own) story.box = own;
+      for (const p of paths(n.attrs?.shows)) {
+        if (!p.box) continue;
+        const d = detail(p.box);
+        d.stories = [...(d.stories ?? []), story];
+      }
+      index.push({ name: story.title, kind: "story", box: own ?? UI });
+    }
+  }
   const itemDrift = new Map<string, Drift>();
   const api = input.current.api;
   for (const n of api?.nodes ?? []) {
@@ -409,6 +486,15 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         if (layer === "schema")
           return n.role === "index" ? n.parent : n.role === "migration" ? DB : n.id;
         if (layer === "systems") return n.id;
+        // A story marks its own file; a page or app that is gone marks the box above it.
+        if (layer === "ui")
+          return n.role === "story"
+            ? boxOfPath(String(n.attrs?.file))
+            : nodes[n.id]
+              ? n.id
+              : n.parent && nodes[n.parent]
+                ? n.parent
+                : UI;
         if (n.role === "route") return n.parent ? services.get(n.parent)?.box : undefined;
         return n.attrs?.file ? boxOfPath(String(n.attrs.file)) : undefined;
       };
@@ -473,7 +559,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     const kids = graph.children ?? [];
     if (grid) {
       const order = [...kids].sort(
-        (a, b) => (fanIn.get(b.id) ?? 0) - (fanIn.get(a.id) ?? 0) || a.id.localeCompare(b.id),
+        (a, b) => (fanIn.get(b.id) ?? 0) - (fanIn.get(a.id) ?? 0) || byOrder(a.id, b.id),
       );
       const cols = Math.min(8, Math.ceil(Math.sqrt(order.length * 1.8)));
       const cw = Math.max(...order.map((k) => k.width ?? 0)) + 24;
@@ -505,6 +591,9 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     };
   };
   const levels: Record<string, Level> = {};
+  /** Tab order where the layer gives one (apps, pages), else by id. */
+  const byOrder = (a: string, b: string) =>
+    (nodes[a]?.order ?? -1) - (nodes[b]?.order ?? -1) || (a < b ? -1 : a > b ? 1 : 0);
   const fanIn = new Map<string, number>();
   for (const m of levelEdges.values())
     for (const [k] of m) {
@@ -519,7 +608,9 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         const size = (id: string) => {
           const n = nodes[id] as TreeNode;
           const s = 1 + Math.min(0.5, Math.log2(1 + (fanIn.get(id) ?? 0)) / 10);
-          const w = Math.max(132, Math.min(300, n.label.length * 7.6 + 48));
+          // The second line is smaller type: a long one (`list of delivery.step`) widens the box too.
+          const text = Math.max(n.label.length * 7.6, (n.sub?.length ?? 0) * 6.6);
+          const w = Math.max(132, Math.min(300, text + 48));
           return { width: Math.round(w * s), height: Math.round(52 * s) };
         };
         const edges = [...m].map(([k, a], i) => {
@@ -538,13 +629,14 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
             "elk.aspectRatio": "1.8",
             "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
           },
-          children: [...c.kids].sort().map((id) => ({ id, ...size(id) })),
+          children: [...c.kids].sort(byOrder).map((id) => ({ id, ...size(id) })),
           edges: edges.map(({ id, sources, targets }) => ({ id, sources, targets })),
         };
         const key = createHash("sha1")
           .update(`${LAYOUT_VERSION}${JSON.stringify(graph)}`)
           .digest("base64url");
-        const hit = cache[key] ?? (await place(graph, c.kids.length > GRID_OVER));
+        // No lines: ELK packs the boxes by size and loses their order; a grid keeps it.
+        const hit = cache[key] ?? (await place(graph, c.kids.length > GRID_OVER || !edges.length));
         used[key] = hit;
         const at = new Map(hit.boxes.map(([id, x, y]) => [id, { x, y }]));
         levels[c.id] = {
@@ -570,7 +662,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         };
       }),
   );
-  for (const n of Object.values(nodes)) n.kids.sort();
+  for (const n of Object.values(nodes)) n.kids.sort(byOrder);
   if (input.cache) {
     for (const k of Object.keys(input.cache)) delete input.cache[k];
     Object.assign(input.cache, used);
@@ -584,6 +676,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     routes: routes?.nodes.filter((n) => n.role === "route").length ?? 0,
     tables: tables.length,
     systems: sys?.nodes.filter((n) => n.role === "system").length ?? 0,
+    screens: ui?.nodes.filter((n) => n.role === "screen").length ?? 0,
     drift: Object.values(nodes).filter((n) => n.drift && n.drift !== "inside").length,
   };
   return {

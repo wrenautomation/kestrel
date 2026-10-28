@@ -7,6 +7,7 @@ import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { seams, systems } from "./systems.js";
+import { readStory } from "./ui.js";
 
 const FILES: Record<string, string> = {
   "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "NodeNext" } }),
@@ -192,4 +193,29 @@ model {
     expect(await seams(root, g)).toEqual(["system:app.worker → system:mail: ../mail/src/gone.ts"]);
     await rm(root, { recursive: true });
   }, 30_000);
+});
+
+describe("ui", () => {
+  it("reads a story's meta through a named default and drops mocks from what it shows", async () => {
+    const at = (p: string) => join(root, p);
+    await mkdir(at("app/src/mocks"), { recursive: true });
+    for (const f of ["app/src/card.tsx", "app/src/mocks/api.ts"]) await writeFile(at(f), "");
+    const text = `import { Card } from "./card.js";
+import { api } from "./mocks/api.js";
+import type { Meta } from "@storybook/react";
+const meta: Meta = { title: "Parts/Card", id: "parts-card" };
+export default meta;
+export const One = { args: { id: "n1" } };
+`;
+    expect(readStory(root, "app/src/card.stories.tsx", text)).toEqual({
+      file: "app/src/card.stories.tsx",
+      id: "parts-card",
+      title: "Parts/Card",
+      shows: ["app/src/card.tsx"],
+    });
+    expect(readStory(root, "app/src/bare.stories.tsx", "export default {};\n")).toMatchObject({
+      id: "bare",
+      title: "bare",
+    });
+  });
 });

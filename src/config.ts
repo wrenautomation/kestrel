@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-export const LAYER_IDS = ["imports", "api", "routes", "schema", "systems"] as const;
+export const LAYER_IDS = ["imports", "api", "routes", "schema", "systems", "ui"] as const;
 export type LayerId = (typeof LAYER_IDS)[number];
 
 export const Imports = z.object({
@@ -48,6 +48,15 @@ const Systems = z.object({
   dir: z.string().default("map/system"),
 });
 
+const Ui = z.object({
+  /** Shell command, run in the repo root, that prints the screens as JSON (see layers/ui.ts). */
+  dump: z.string(),
+  /** Globs of CSF story files. */
+  stories: z
+    .array(z.string())
+    .default(["packages/*/src/**/*.stories.tsx", "apps/*/web/src/**/*.stories.tsx"]),
+});
+
 const Cards = z.object({
   dir: z.string().default("map"),
   /** Roles that must each have a card. */
@@ -63,6 +72,7 @@ export const Config = z.object({
       routes: Routes.optional(),
       schema: Schema.optional(),
       systems: Systems.optional(),
+      ui: Ui.optional(),
     })
     .default({}),
   cards: Cards.optional(),

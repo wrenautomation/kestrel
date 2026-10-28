@@ -31,6 +31,13 @@ const sysName = (data: ViewData, id: string) => {
   return up ? `${up.label} / ${n?.label}` : (n?.label ?? id);
 };
 
+/** A page reads with its app: `Marketing / Plan`. */
+const screenName = (data: ViewData, id: string) => {
+  const n = data.nodes[id];
+  const app = n?.parent ? data.nodes[n.parent] : undefined;
+  return app ? `${app.label} / ${n?.label}` : (n?.label ?? id);
+};
+
 /** The package part of a file id: `@scope/name` or `name`. */
 const pkgPart = (id: string) => /^(@[^/]+\/[^/]+|[^@/][^/]*)\//.exec(id)?.[1];
 
@@ -268,6 +275,9 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
   if (!n) return <aside className="detail" />;
   const npm = d?.attrs?.npm;
   const sys = n.role === "system" || n.role === "part" || n.role === "systems";
+  const ui = n.role === "screens" || n.role === "app" || n.role === "screen";
+  const a = d?.attrs;
+  const text = (k: string) => (typeof a?.[k] === "string" ? (a[k] as string) : undefined);
   return (
     <aside className="detail" ref={ref}>
       <header>
@@ -285,7 +295,8 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
           </>
         ) : (
           n.kids.length > 0 &&
-          !sys && (
+          !sys &&
+          !ui && (
             <>
               <dt>Files</dt>
               <dd>{n.files}</dd>
@@ -296,6 +307,42 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
           <>
             <dt>Runs on</dt>
             <dd>{d.attrs.technology}</dd>
+          </>
+        )}
+        {n.role === "screen" && (
+          <>
+            <dt>Template</dt>
+            <dd>{text("template")}</dd>
+            {text("record") && (
+              <>
+                <dt>Record</dt>
+                <dd>{text("record")}</dd>
+              </>
+            )}
+            {text("group") && (
+              <>
+                <dt>Tab group</dt>
+                <dd>{text("group")}</dd>
+              </>
+            )}
+            {a?.hidden === true && (
+              <>
+                <dt>Tab</dt>
+                <dd>none: reached by a link</dd>
+              </>
+            )}
+          </>
+        )}
+        {n.role === "app" && Array.isArray(a?.areas) && (
+          <>
+            <dt>Sidebar</dt>
+            <dd>{(a.areas as string[]).join("; ")}</dd>
+          </>
+        )}
+        {n.role === "app" && a?.parked === true && (
+          <>
+            <dt>State</dt>
+            <dd>parked</dd>
           </>
         )}
         {n.role === "db" && (
@@ -323,10 +370,12 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
           </>
         )}
       </dl>
-      {typeof d?.attrs?.description === "string" && <p className="about">{d.attrs.description}</p>}
+      {(text("description") ?? text("about") ?? text("blurb")) && (
+        <p className="about">{text("description") ?? text("about") ?? text("blurb")}</p>
+      )}
       {d?.code?.length ? (
         <section>
-          <h3>Code</h3>
+          <h3>{n.role === "screen" ? "Drawn in" : n.role === "app" ? "Registered in" : "Code"}</h3>
           <Paths list={d.code} onGo={onGo} />
         </section>
       ) : null}
@@ -391,6 +440,42 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
             </section>
           )}
           <Services list={d.services} mark={mark} onGo={onGo} />
+          {d.screens?.length ? (
+            <section>
+              <h3>
+                Screens <span className="n">{d.screens.length}</span>
+              </h3>
+              <ul className="links">
+                {d.screens.map((s) => (
+                  <li key={s}>
+                    <button type="button" onClick={() => onGo(s)}>
+                      {screenName(data, s)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {d.stories?.length ? (
+            <section>
+              <h3>
+                Stories <span className="n">{d.stories.length}</span>
+              </h3>
+              <ul className="links">
+                {d.stories.map((s) => (
+                  <li key={s.id}>
+                    {s.box ? (
+                      <button type="button" onClick={() => onGo(s.box as string)}>
+                        {s.title}
+                      </button>
+                    ) : (
+                      s.title
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           {n.role === "file" && d.exports.length > 0 && (
             <section>
               <h3>

@@ -137,6 +137,7 @@ export function App() {
           {c.files} files · {c.exports} exports · {c.services} services · {c.routes} routes
           {c.tables ? ` · ${c.tables} tables` : ""}
           {c.systems ? ` · ${c.systems} systems` : ""}
+          {c.screens ? ` · ${c.screens} screens` : ""}
         </span>
         {data.approved ? (
           <span className={c.drift ? "chip warn" : "chip good"}>

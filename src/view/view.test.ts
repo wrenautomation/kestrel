@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Graph, Node } from "../graph.js";
+import { fromDump } from "../layers/ui.js";
 import { buildView, GRID_OVER } from "./build.js";
 import type { LayoutCache } from "./types.js";
 
@@ -237,5 +238,50 @@ describe("buildView", () => {
       },
     ]);
     expect(v.counts.systems).toBe(2);
+  });
+
+  it("folds the screens into apps and pages in tab order, each page and story on its file", async () => {
+    const ui = fromDump(
+      {
+        areas: { team: [{ id: "tools", label: "Tools", apps: ["cal"] }], client: [] },
+        apps: [
+          {
+            id: "cal",
+            export: "clientCal",
+            name: "Calendar",
+            pages: [
+              { id: "week", label: "Week", template: "hand", file: "packages/a/src/x.ts" },
+              { id: "all", label: "All", template: "list", record: "booking" },
+            ],
+          },
+          { id: "cal", export: "cal", audience: "team", name: "Calendar", pages: [] },
+        ],
+      },
+      [{ id: "x", title: "Parts/X", file: "packages/b/src/z.ts", shows: ["packages/a/src/x.ts"] }],
+    );
+    const v = await buildView({
+      root: "/r",
+      current: { imports: imports(), api, ui },
+      approved: { imports: null, api: null, ui: null },
+    });
+    expect(v.nodes["ui:"]?.kids).toEqual(["ui:clientCal", "ui:cal"]);
+    expect(v.nodes["ui:clientCal"]).toMatchObject({ label: "Calendar · client", sub: "2 pages" });
+    expect(v.nodes["ui:cal"]?.label).toBe("Calendar · Wren");
+    expect(v.details["ui:cal"]?.attrs?.areas).toEqual(["team: Tools"]);
+    expect(v.details["ui:clientCal"]?.attrs?.areas).toBeUndefined();
+    // Tab order, not id order; a level with no lines keeps it in a grid.
+    expect(v.nodes["ui:clientCal"]?.kids).toEqual(["ui:clientCal/week", "ui:clientCal/all"]);
+    expect(v.levels["ui:clientCal"]?.grid).toBe(true);
+    expect(v.nodes["ui:clientCal/all"]?.sub).toBe("list of booking");
+    expect(v.details["ui:clientCal/week"]?.code).toEqual([
+      { path: "packages/a/src/x.ts", box: "@s/a/src/x.ts" },
+    ]);
+    expect(v.details["@s/a/src/x.ts"]).toMatchObject({
+      screens: ["ui:clientCal/week"],
+      stories: [
+        { id: "story:x", title: "Parts/X", file: "packages/b/src/z.ts", box: "@s/b/src/z.ts" },
+      ],
+    });
+    expect(v.counts.screens).toBe(2);
   });
 });

@@ -20,6 +20,8 @@ export interface TreeNode {
   tables?: number;
   /** The box's second line when files or tables say nothing: a system's kind or part count. */
   sub?: string;
+  /** Place among its siblings when the layer gives one (an app's pages in tab order). */
+  order?: number;
   drift?: Drift;
   /** Approved nodes under it that the current map no longer has. */
   removed?: string[];
@@ -66,8 +68,20 @@ export interface Detail {
   /** Exports with no declared type, for a package or folder: the count only. */
   inferred: number;
   exportCount: number;
+  /** A file's pages: the screen boxes drawn in it. */
+  screens?: string[];
+  /** A file's stories: the stories that show it alone. */
+  stories?: StoryRef[];
   /** The cards that cover it, entity card first. */
   cards: CardRef[];
+}
+
+/** A story as a file's detail lists it; `box` is the story file's own box. */
+export interface StoryRef {
+  id: string;
+  title: string;
+  file: string;
+  box?: string;
 }
 
 /** One relation of the systems model, seen from one end. */

@@ -43,6 +43,7 @@ const SHAPE: Record<string, Shape> = {
   dir: "zone",
   folder: "zone",
   systems: "zone",
+  screens: "zone",
   service: "pill",
   db: "drum",
   schema: "drum",
@@ -243,7 +244,8 @@ export function Canvas({ data, focus, sel, onSelect, onOpen }: Props) {
           box: b,
           selected: b.id === sel,
           near: near.has(b.id),
-          dim: !!sel && b.id !== sel && !near.has(b.id),
+          // A level with no lines has nothing to dim toward.
+          dim: !!sel && (level?.edges.length ?? 0) > 0 && b.id !== sel && !near.has(b.id),
         },
       })),
     [level, data, sel, near],
@@ -334,8 +336,9 @@ export function Canvas({ data, focus, sel, onSelect, onOpen }: Props) {
     <div className="canvas" ref={wrap}>
       {level.grid && (
         <p className="hint">
-          {level.boxes.length} boxes in one folder: too flat for a graph. Sorted by fan-in; select a
-          box to see its lines.
+          {level.edges.length
+            ? `${level.boxes.length} boxes in one folder: too flat for a graph. Sorted by fan-in; select a box to see its lines.`
+            : `${level.boxes.length} boxes, no lines between them, in their own order.`}
         </p>
       )}
       <ReactFlow
