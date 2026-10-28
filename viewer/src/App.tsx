@@ -135,6 +135,7 @@ export function App() {
         </nav>
         <span className="counts">
           {c.files} files · {c.exports} exports · {c.services} services · {c.routes} routes
+          {c.tables ? ` · ${c.tables} tables` : ""}
         </span>
         {data.approved ? (
           <span className={c.drift ? "chip warn" : "chip good"}>

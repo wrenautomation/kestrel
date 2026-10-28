@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Config } from "../config.js";
 import { api } from "./api.js";
 import { routes } from "./routes.js";
+import { fromTbls, schema } from "./schema.js";
 
 const FILES: Record<string, string> = {
   "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "NodeNext" } }),
@@ -80,5 +81,70 @@ describe("routes", () => {
       output: "string",
       wrap: "plain",
     });
+  });
+});
+
+describe("schema", () => {
+  it("gives tables under their schema, indexes under tables and a key per foreign key", () => {
+    const g = fromTbls(
+      {
+        tables: [
+          {
+            name: "public.leads",
+            type: "BASE TABLE",
+            columns: [
+              { name: "id", type: "uuid", nullable: false, default: "gen_random_uuid()" },
+              { name: "client_id", type: "uuid", nullable: true },
+            ],
+            indexes: [{ name: "leads_pkey", def: "CREATE UNIQUE INDEX leads_pkey ON leads (id)" }],
+            constraints: [{ name: "leads_pkey", type: "PRIMARY KEY", def: "PRIMARY KEY (id)" }],
+          },
+          {
+            name: "clients",
+            type: "VIEW",
+            columns: [{ name: "id", type: "uuid", nullable: false }],
+          },
+          { name: "audit.log", type: "BASE TABLE", columns: [] },
+        ],
+        relations: [
+          {
+            table: "public.leads",
+            columns: ["client_id"],
+            parent_table: "clients",
+            parent_columns: ["id"],
+          },
+          {
+            table: "public.leads",
+            columns: ["owner_id"],
+            parent_table: "clients",
+            parent_columns: ["id"],
+          },
+        ],
+      },
+      { skip: ["audit"] },
+      ["0001_init.sql"],
+    );
+    expect(g.nodes.map((n) => [n.id, n.role, n.parent ?? null])).toEqual([
+      ["schema:public", "schema", null],
+      ["table:public.leads", "table", "schema:public"],
+      ["index:public.leads.leads_pkey", "index", "table:public.leads"],
+      ["table:public.clients", "table", "schema:public"],
+      ["migration:0001_init.sql", "migration", null],
+    ]);
+    expect(g.nodes[1]?.attrs?.columns).toEqual([
+      "id uuid = gen_random_uuid()",
+      "client_id uuid null",
+    ]);
+    expect(g.nodes[3]?.attrs?.kind).toBe("view");
+    expect(g.edges).toEqual([
+      {
+        from: "table:public.leads",
+        to: "table:public.clients",
+        kind: "references",
+        attrs: { columns: ["client_id → id", "owner_id → id"] },
+      },
+    ]);
+    const pages = schema.render({ ...g, nodes: g.nodes.filter((n) => n.group === "public") });
+    expect(pages["public.md"]).toContain("- public.clients (client_id → id; owner_id → id)");
   });
 });

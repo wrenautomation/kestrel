@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { Item, Link, Service, ViewData } from "../../src/view/types";
+import type { Detail as DetailData, Item, Link, Service, ViewData } from "../../src/view/types";
 
 interface Props {
   data: ViewData;
@@ -44,11 +44,13 @@ function Links({
         {list.map((l) => (
           <li key={l.id}>
             <button type="button" onClick={() => onGo(l.id)}>
-              {data.nodes[l.id]?.role !== "file"
-                ? l.id
-                : pkgPart(l.id) === own
-                  ? l.id.slice((own?.length ?? -1) + 1)
-                  : l.id.replace(/^@[^/]+\//, "")}
+              {data.nodes[l.id]?.role === "table"
+                ? l.id.slice("table:".length)
+                : data.nodes[l.id]?.role !== "file"
+                  ? l.id
+                  : pkgPart(l.id) === own
+                    ? l.id.slice((own?.length ?? -1) + 1)
+                    : l.id.replace(/^@[^/]+\//, "")}
             </button>
             <span className="meta">
               {l.n}
@@ -127,6 +129,55 @@ function Services({
   );
 }
 
+/** A table's columns, keys and indexes, as Postgres has them. */
+function Table({
+  attrs,
+  indexes,
+  mark,
+}: {
+  attrs: DetailData["attrs"];
+  indexes: Item[];
+  mark: string | undefined;
+}) {
+  const list = (k: string) => {
+    const v = attrs?.[k];
+    return Array.isArray(v) ? (v as readonly string[]) : [];
+  };
+  const part = (title: string, rows: readonly string[]) =>
+    rows.length > 0 && (
+      <section>
+        <h3>
+          {title} <span className="n">{rows.length}</span>
+        </h3>
+        <ul className="plain">
+          {rows.map((r) => (
+            <li key={r}>
+              <code>{r}</code>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  return (
+    <>
+      {part("Columns", list("columns"))}
+      {part("Constraints", list("constraints"))}
+      {indexes.length > 0 && (
+        <section>
+          <h3>
+            Indexes <span className="n">{indexes.length}</span>
+          </h3>
+          <ul className="items">
+            {indexes.map((x) => (
+              <Row key={x.id} it={x} mark={mark} />
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
+  );
+}
+
 export function Detail({ data, id, mark, onGo, onOpen }: Props) {
   const n = data.nodes[id];
   const d = data.details[id];
@@ -153,10 +204,26 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
       <p className="path">{n.id}</p>
       {n.drift && <p className={`drift drift-${n.drift}`}>{DRIFT[n.drift]}</p>}
       <dl className="facts">
-        {n.kids.length > 0 && (
+        {n.tables !== undefined ? (
           <>
-            <dt>Files</dt>
-            <dd>{n.files}</dd>
+            <dt>Tables</dt>
+            <dd>{n.tables}</dd>
+          </>
+        ) : (
+          n.kids.length > 0 && (
+            <>
+              <dt>Files</dt>
+              <dd>{n.files}</dd>
+            </>
+          )
+        )}
+        {n.role === "db" && (
+          <>
+            <dt>Migrations</dt>
+            <dd>
+              {String(d?.attrs?.migrations ?? 0)}
+              {d?.attrs?.latest ? ` (latest ${d.attrs.latest})` : ""}
+            </dd>
           </>
         )}
         {(d?.exportCount ?? 0) > 0 && (
@@ -206,8 +273,21 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
       ))}
       {d && (
         <>
-          <Links title="Uses" list={d.uses} data={data} from={n.id} onGo={onGo} />
-          <Links title="Used by" list={d.usedBy} data={data} from={n.id} onGo={onGo} />
+          <Links
+            title={n.role === "table" ? "References" : "Uses"}
+            list={d.uses}
+            data={data}
+            from={n.id}
+            onGo={onGo}
+          />
+          <Links
+            title={n.role === "table" ? "Referenced by" : "Used by"}
+            list={d.usedBy}
+            data={data}
+            from={n.id}
+            onGo={onGo}
+          />
+          {n.role === "table" && <Table attrs={d.attrs} indexes={d.indexes} mark={mark} />}
           {Array.isArray(npm) && npm.length > 0 && (
             <section>
               <h3>

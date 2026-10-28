@@ -14,6 +14,7 @@
   --l1: #2f8a80;
   --l2: #c0567f;
   --l3: #3d78b8;
+  --l4: #a8741c;
   --hair: color-mix(in srgb, var(--ink) 11%, transparent);
   --fill: color-mix(in srgb, var(--ink) 5%, transparent);
   --tint: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -42,6 +43,7 @@
     --l1: #5cc3b6;
     --l2: #e588ac;
     --l3: #7fb0e6;
+    --l4: #e0b05a;
     --edge: #7a69ad;
     --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
     color-scheme: dark;
@@ -62,6 +64,7 @@
   --l1: #5cc3b6;
   --l2: #e588ac;
   --l3: #7fb0e6;
+  --l4: #e0b05a;
   --edge: #7a69ad;
   --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
   color-scheme: dark;
@@ -327,6 +330,11 @@ code {
 }
 .role-service {
   --c: var(--l2);
+}
+.role-db,
+.role-schema,
+.role-table {
+  --c: var(--l4);
 }
 
 .line {

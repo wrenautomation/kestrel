@@ -6,7 +6,7 @@ import type { Attrs } from "../graph.js";
 
 export type Drift = "add" | "change" | "inside";
 
-/** A box: a repo, a top folder, a package, a source folder or a file. */
+/** A box: a repo, a top folder, a package, a source folder or a file; the database, a schema or a table. */
 export interface TreeNode {
   id: string;
   label: string;
@@ -16,6 +16,8 @@ export interface TreeNode {
   kids: string[];
   /** Files under it; 1 for a file. */
   files: number;
+  /** Tables and views under the database or a schema. */
+  tables?: number;
   drift?: Drift;
   /** Approved nodes under it that the current map no longer has. */
   removed?: string[];
@@ -48,11 +50,13 @@ export interface Service {
 
 export interface Detail {
   attrs?: Attrs;
-  /** Boxes outside it that it imports, and that import it, with the file-edge count. */
+  /** Boxes outside it that it imports (a table: references), and the other way, with the edge count. */
   uses: Link[];
   usedBy: Link[];
   exports: Item[];
   services: Service[];
+  /** A table's indexes: name, `index`, its CREATE statement. */
+  indexes: Item[];
   /** Exports with no declared type, for a package or folder: the count only. */
   inferred: number;
   exportCount: number;

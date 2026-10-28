@@ -140,4 +140,48 @@ describe("buildView", () => {
     expect(v.nodes["@s/a"]?.badge).toBeUndefined();
     expect(v.nodes["@s/b"]?.badge).toBe("none");
   });
+
+  it("folds the database into schemas and tables, keys lifted like imports", async () => {
+    const schema: Graph = {
+      layer: "schema",
+      nodes: [
+        { id: "schema:public", role: "schema", group: "public" },
+        { id: "schema:books", role: "schema", group: "books" },
+        { id: "table:public.leads", role: "table", parent: "schema:public", group: "public" },
+        { id: "table:public.clients", role: "table", parent: "schema:public", group: "public" },
+        { id: "table:books.orders", role: "table", parent: "schema:books", group: "books" },
+        {
+          id: "index:public.leads.leads_pkey",
+          role: "index",
+          parent: "table:public.leads",
+          group: "public",
+          attrs: { def: "CREATE UNIQUE INDEX leads_pkey ON leads (id)" },
+        },
+        { id: "migration:0001.sql", role: "migration", group: "migrations" },
+      ],
+      edges: [
+        { from: "table:public.leads", to: "table:public.clients", kind: "references" },
+        { from: "table:books.orders", to: "table:public.clients", kind: "references" },
+      ],
+    };
+    const v = await buildView({
+      root: "/r",
+      current: { imports: imports(), api, schema },
+      approved: { imports: null, api: null, schema: null },
+    });
+    expect(v.nodes["repo:r"]?.kids).toEqual(["db:", "dir:apps", "dir:packages"]);
+    expect(v.nodes["db:"]?.tables).toBe(3);
+    expect(v.nodes["schema:public"]?.kids).toEqual(["table:public.clients", "table:public.leads"]);
+    expect(v.nodes["table:public.leads"]?.label).toBe("leads");
+    expect(v.details["table:public.leads"]?.indexes.map((i) => i.name)).toEqual(["leads_pkey"]);
+    expect(v.details["db:"]?.attrs).toEqual({ migrations: 1, latest: "0001.sql" });
+    const at = (lvl: string) => v.levels[lvl]?.edges.map((e) => [e.from, e.to]) ?? [];
+    expect(at("schema:public")).toEqual([["table:public.leads", "table:public.clients"]]);
+    expect(at("db:")).toEqual([["schema:books", "schema:public"]]);
+    expect(v.details["table:public.clients"]?.usedBy.map((l) => l.id)).toEqual([
+      "table:books.orders",
+      "table:public.leads",
+    ]);
+    expect(v.counts.tables).toBe(3);
+  });
 });

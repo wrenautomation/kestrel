@@ -28,9 +28,19 @@ const Routes = z.object({
 });
 
 const Schema = z.object({
-  /** Env var that holds a migrated Postgres URL; the layer reads it, never prints it. */
+  /** Env var that holds a migrated Postgres URL (CI); the layer reads it, never prints it. */
   urlEnv: z.string().default("KESTREL_DB_URL"),
-  schemas: z.array(z.string()).default(["public"]),
+  /** Shell command that migrates an empty database; kestrel gives it the URL in `migrateUrlEnv`. */
+  migrate: z.string().optional(),
+  migrateUrlEnv: z.string().default("DATABASE_URL"),
+  /** Folder of migration files; each `.sql` is a `migration` node. */
+  migrations: z.string().optional(),
+  image: z.string().default("postgres:17"),
+  tbls: z.string().default("ghcr.io/k1low/tbls:v1.96.1"),
+  /** Schemas to read; by default every one tbls finds, less `skip`. */
+  schemas: z.array(z.string()).optional(),
+  /** The migrator's own bookkeeping, not the app's shape. */
+  skip: z.array(z.string()).default(["drizzle"]),
 });
 
 const Systems = z.object({
