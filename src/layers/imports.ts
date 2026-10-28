@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { cruise } from "dependency-cruiser";
 import extractTSConfig from "dependency-cruiser/config-utl/extract-ts-config";
+import { Imports } from "../config.js";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
 import { type Pkg, packages } from "./workspace.js";
@@ -32,7 +33,7 @@ const bare = (m: string) =>
 export const imports: Layer = {
   id: "imports",
   async extract({ root, config }) {
-    const opts = config.layers.imports ?? { packages: ["packages/*", "apps/*"], exclude: [] };
+    const opts = config.layers.imports ?? Imports.parse({});
     const pkgs = await packages(root, opts.packages);
     const repo = `repo:${basename(root)}`;
     const ownerOf = (path: string) => pkgs.find((p) => path.startsWith(p.dir));

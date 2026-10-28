@@ -1,16 +1,22 @@
 /** `kestrel.json` at the repo root: which layers run and where their inputs are. */
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
 
 export const LAYER_IDS = ["imports", "api", "routes", "schema", "systems"] as const;
 export type LayerId = (typeof LAYER_IDS)[number];
 
-const Imports = z.object({
+export const Imports = z.object({
   /** Globs of workspace packages; each is one group. */
   packages: z.array(z.string()).default(["packages/*", "apps/*"]),
   /** Paths dependency-cruiser skips. */
-  exclude: z.array(z.string()).default(["node_modules", "dist", "\\.test\\.", "\\.stories\\."]),
+  exclude: z
+    .array(z.string())
+    .default([
+      "(^|/)(node_modules|dist|build|coverage|storybook-static)/",
+      "\\.test\\.",
+      "\\.stories\\.",
+    ]),
 });
 
 const Api = z.object({
@@ -53,8 +59,8 @@ export const Config = z.object({
 });
 export type Config = z.infer<typeof Config>;
 
-/** Reads and checks `kestrel.json` under `root`. */
-export async function loadConfig(root: string): Promise<Config> {
-  const text = await readFile(join(root, "kestrel.json"), "utf8");
+/** Reads and checks the config: `kestrel.json` under `root`, or a file given (relative to `root`). */
+export async function loadConfig(root: string, file = "kestrel.json"): Promise<Config> {
+  const text = await readFile(resolve(root, file), "utf8");
   return Config.parse(JSON.parse(text));
 }
