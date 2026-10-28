@@ -43,10 +43,38 @@ const Schema = z.object({
   skip: z.array(z.string()).default(["drizzle"]),
 });
 
+const Map_ = z.record(z.string(), z.string()).default({});
+
+/** The residue: what deploy files and code cannot say (see layers/systems.ts). */
 const Systems = z.object({
-  /** The LikeC4 workspace: every `.c4` file under it. */
-  dir: z.string().default("map/system"),
+  wrangler: z.array(z.string()).default(["**/wrangler.toml"]),
+  terraform: z.array(z.string()).default([]),
+  compose: z.array(z.string()).default([]),
+  /** Deploy files that carry `# @unit [kind:]name: one line` tags. */
+  tags: z.array(z.string()).default([]),
+  /** Deploy file glob → host unit key its units run on. */
+  hosts: Map_,
+  /** Unit key → its entry file, the root of its bundle. */
+  entries: Map_,
+  /** Sibling repo id → its dir from the root. */
+  repos: Map_,
+  /** Package dirs inside a repo, for npm names and deps. */
+  packages: z.array(z.string()).default(["packages/*", "apps/*"]),
+  vendors: z
+    .record(z.string(), z.object({ title: z.string(), description: z.string().optional() }))
+    .default({}),
+  /** Env var → target id. */
+  env: Map_,
+  /** Import specifier or prefix → target id. */
+  imports: Map_,
+  /** Settings file and a regex with groups (key, env var), so a settings alias counts as its env var. */
+  settings: z.object({ file: z.string(), pattern: z.string() }).optional(),
+  /** Unit key that invokes Restate services. */
+  restate: z.string().optional(),
+  /** Id → one-liner, where no file gives one. */
+  describe: Map_,
 });
+export type SystemsConfig = z.infer<typeof Systems>;
 
 const Ui = z.object({
   /** Shell command, run in the repo root, that prints the screens as JSON (see layers/ui.ts). */

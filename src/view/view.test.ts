@@ -211,7 +211,7 @@ describe("buildView", () => {
           from: "system:app.api",
           to: "system:site",
           kind: "calls",
-          attrs: { title: ["clicks"], here: ["packages/a/src/x.ts"], there: ["../site/x.ts"] },
+          attrs: { title: ["clicks"], here: ["packages/a/src/x.ts"] },
         },
       ],
     };
@@ -234,7 +234,6 @@ describe("buildView", () => {
         kind: "calls",
         titles: ["clicks"],
         here: [{ path: "packages/a/src/x.ts", box: "@s/a/src/x.ts" }],
-        there: [{ path: "../site/x.ts" }],
       },
     ]);
     expect(v.counts.systems).toBe(2);

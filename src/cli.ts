@@ -61,7 +61,12 @@ export async function gen(opts: RunOptions): Promise<void> {
   const store = fileStore(opts.root, config.out);
   for (const id of chosen(config, opts.layers)) {
     const layer = LAYERS[id];
-    const g = await layer.extract({ root: opts.root, config, env: process.env });
+    const g = await layer.extract({
+      root: opts.root,
+      config,
+      env: process.env,
+      prior: (l) => store.read(l, "current"),
+    });
     await store.write(id, "current", g);
     const pages: Record<string, string> = {};
     for (const part of byGroup(g).values()) Object.assign(pages, layer.render(part));
@@ -100,9 +105,9 @@ export async function check(opts: RunOptions): Promise<number> {
   const gone = model ? await seams(opts.root, model) : [];
   if (gone.length) {
     console.error(
-      `\nsystems: ${gone.length} code paths the model names are gone\n  ${gone.join("\n  ")}`,
+      `\nsystems: ${gone.length} code paths the map names are gone\n  ${gone.join("\n  ")}`,
     );
-    console.error(`Fix the paths in ${config.layers.systems?.dir}.`);
+    console.error("Fix `entries` in kestrel.json `layers.systems`.");
     code = 1;
   }
   if (config.cards) {

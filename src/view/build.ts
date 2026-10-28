@@ -193,10 +193,14 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
   const SYS = "sys:";
   if (sys?.nodes.length) {
     add({ id: SYS, label: "systems", role: "systems", parent: repo, kids: [], files: 0 });
-    // Parents first: LikeC4 ids nest by dots, so a shorter id is never a child of a longer one.
-    for (const n of [...sys.nodes].sort(
-      (a, b) => a.id.split(".").length - b.id.split(".").length,
-    )) {
+    // Parents first: a part may sit in a host part.
+    const byId = new Map(sys.nodes.map((n) => [n.id, n]));
+    const depth = (n: Node): number => {
+      const p = n.parent ? byId.get(n.parent) : undefined;
+      return p ? 1 + depth(p) : 0;
+    };
+    for (const n of [...sys.nodes].sort((a, b) => depth(a) - depth(b))) {
+      const kind = String(n.attrs?.kind ?? n.role);
       add({
         id: n.id,
         label: String(n.attrs?.title ?? n.id.slice("system:".length)),
@@ -204,7 +208,8 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         parent: n.parent ?? SYS,
         kids: [],
         files: 0,
-        sub: String(n.attrs?.kind ?? n.role),
+        sub: String(n.attrs?.technology ?? kind),
+        kind,
       });
       detail(n.id).attrs = n.attrs ?? {};
     }
@@ -219,8 +224,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     }
     for (const e of sys.edges) {
       const titles = Array.isArray(e.attrs?.title) ? (e.attrs.title as string[]) : [];
-      const [here, there] = [paths(e.attrs?.here), paths(e.attrs?.there)];
-      const s = { kind: e.kind, titles, here, there };
+      const s = { kind: e.kind, titles, here: paths(e.attrs?.here) };
       detail(e.from).seams.push({ ...s, id: e.to, out: true });
       detail(e.to).seams.push({ ...s, id: e.from, out: false });
     }

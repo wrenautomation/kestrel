@@ -49,12 +49,10 @@ const SHAPE: Record<string, Shape> = {
   schema: "drum",
   table: "drum",
 };
-/** A LikeC4 kind on a system or part. */
-const KIND: Record<string, Shape> = { store: "drum" };
+/** A system part's kind → its shape. */
+const KIND: Record<string, Shape> = { s3: "drum", d1: "drum", kv: "drum", r2: "drum" };
 const shapeOf = (n: TreeNode): Shape =>
-  SHAPE[n.role] ??
-  ((n.role === "part" || n.role === "system") && n.sub ? KIND[n.sub] : undefined) ??
-  "rect";
+  SHAPE[n.role] ?? (n.kind ? KIND[n.kind] : undefined) ?? "rect";
 const sketch = rough.generator();
 const seedOf = (id: string) => {
   let h = 2166136261;

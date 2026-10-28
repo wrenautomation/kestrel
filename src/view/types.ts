@@ -20,6 +20,8 @@ export interface TreeNode {
   tables?: number;
   /** The box's second line when files or tables say nothing: a system's kind or part count. */
   sub?: string;
+  /** A system part's kind: `container`, `s3`, `worker`. Picks its shape. */
+  kind?: string;
   /** Place among its siblings when the layer gives one (an app's pages in tab order). */
   order?: number;
   drift?: Drift;
@@ -94,9 +96,8 @@ export interface Seam {
   out: boolean;
   kind: string;
   titles: string[];
-  /** Code at the source end, and at the target end. */
+  /** Code at the source end that makes the link. */
   here: Path[];
-  there: Path[];
 }
 
 /** A code path the model names; `box` when it is a file the map has. */

@@ -192,14 +192,8 @@ function Seams({ list, data, onGo }: { list: Seam[]; data: ViewData; onGo: Props
             {s.titles.length > 0 && <p>{s.titles.join("; ")}</p>}
             {s.here.length > 0 && (
               <div className="ends">
-                <span className="meta">{s.out ? "here" : "there"}</span>
+                <span className="meta">in</span>
                 <Paths list={s.here} onGo={onGo} />
-              </div>
-            )}
-            {s.there.length > 0 && (
-              <div className="ends">
-                <span className="meta">{s.out ? "there" : "here"}</span>
-                <Paths list={s.there} onGo={onGo} />
               </div>
             )}
           </li>

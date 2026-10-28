@@ -6,6 +6,8 @@ export interface LayerContext {
   root: string;
   config: Config;
   env: NodeJS.ProcessEnv;
+  /** A layer earlier in LAYER_IDS, as the current map holds it. */
+  prior(layer: LayerId): Promise<Graph | null>;
 }
 
 export interface Layer {

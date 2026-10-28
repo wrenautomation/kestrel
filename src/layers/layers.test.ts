@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Config } from "../config.js";
+import type { Graph } from "../graph.js";
 import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
@@ -39,7 +40,12 @@ export const svc = restate.service({
 };
 
 let root = "";
-const ctx = () => ({ root, config: Config.parse({ layers: { api: {}, routes: {} } }), env: {} });
+const ctx = () => ({
+  root,
+  config: Config.parse({ layers: { api: {}, routes: {} } }),
+  env: {},
+  prior: async () => null,
+});
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "kestrel-layers-"));
@@ -152,46 +158,91 @@ describe("schema", () => {
 });
 
 describe("systems", () => {
-  it("reads a LikeC4 workspace into systems, services and calls, and finds gone code paths", async () => {
-    const root = await mkdtemp(join(tmpdir(), "kestrel-c4-"));
-    await mkdir(join(root, "map/system"), { recursive: true });
-    await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, "src/send.ts"), "");
-    await writeFile(
-      join(root, "map/system/model.c4"),
-      `specification { element system  element service }
-model {
-  app = system 'App' {
-    description 'Sends mail'
-    worker = service 'Worker' { technology 'Lambda' }
-  }
-  mail = system 'Mail'
-  app.worker -> mail 'send' { metadata { here 'src/send.ts'
-    there '../mail/src/gone.ts' } }
-  app.worker -> mail 'bounce'
-}`,
+  it("derives units from deploy files and links from what their bundles name", async () => {
+    const root = join(await mkdtemp(join(tmpdir(), "kestrel-sys-")), "app");
+    const put = async (p: string, t: string) => {
+      await mkdir(dirname(join(root, p)), { recursive: true });
+      await writeFile(join(root, p), t);
+    };
+    await put("package.json", JSON.stringify({ name: "app", description: "Sends mail" }));
+    await put("apps/web/package.json", JSON.stringify({ name: "@a/web", description: "The site" }));
+    await put(
+      "apps/web/wrangler.toml",
+      'name = "app-web"\nmain = "src/index.ts"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "hits"\n',
     );
+    await put("apps/web/src/index.ts", 'import { send } from "./send.js";\n');
+    await put(
+      "apps/web/src/send.ts",
+      'import Stripe from "stripe";\nconst u = settings.mailUrl;\n',
+    );
+    await put(
+      "deploy/main.tf",
+      '# The box. Runs the cache.\nresource "aws_instance" "box" {\n  instance_type = "t4g.small"\n}\n',
+    );
+    await put(
+      "deploy/box-cache.sh",
+      "# @unit cache: Valkey for the admin reads\ndocker run valkey\n",
+    );
+    await put("deploy/box-other.sh", "docker run other\n");
+    await put("config.ts", 'mailUrl: "APP_MAIL_URL",\n');
+    await put("../mail/package.json", JSON.stringify({ name: "@m/mail", description: "Mail out" }));
+    const imports: Graph = {
+      layer: "imports",
+      nodes: [
+        { id: "@a/web", role: "package", group: "@a/web", attrs: { dir: "apps/web/" } },
+        { id: "@a/web/src/index.ts", role: "file", parent: "@a/web", group: "@a/web" },
+        { id: "@a/web/src/send.ts", role: "file", parent: "@a/web", group: "@a/web" },
+      ],
+      edges: [{ from: "@a/web/src/index.ts", to: "@a/web/src/send.ts", kind: "imports" }],
+    };
+    const config = Config.parse({
+      layers: {
+        systems: {
+          terraform: ["deploy/*.tf"],
+          tags: ["deploy/*.sh"],
+          hosts: { "deploy/box-*.sh": "host:box" },
+          repos: { mail: "../mail" },
+          vendors: { stripe: { title: "Stripe" } },
+          imports: { stripe: "stripe" },
+          env: { APP_MAIL_URL: "mail" },
+          settings: { file: "config.ts", pattern: '(\\w+): "(APP_\\w+)"' },
+        },
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const g = await systems.extract({
       root,
-      config: Config.parse({ layers: { systems: {} } }),
+      config,
       env: {},
+      prior: async (l) => (l === "imports" ? imports : null),
     });
-    expect(g.nodes.map((n) => [n.id, n.role, n.parent ?? null])).toEqual([
-      ["system:app", "system", null],
-      ["system:mail", "system", null],
-      ["system:app.worker", "part", "system:app"],
+    expect(warn.mock.calls.map((c) => c[0])).toContain(
+      "systems: deploy/box-other.sh starts a process and has no `# @unit name: one line`",
+    );
+    warn.mockRestore();
+    expect(g.nodes.map((n) => [n.id, n.parent ?? null, n.attrs?.description ?? null])).toEqual([
+      ["system:app", null, "Sends mail"],
+      ["system:mail", null, "Mail out"],
+      ["system:stripe", null, null],
+      ["system:app.worker:web", "system:app", "The site"],
+      ["system:app.d1:hits", "system:app", null],
+      ["system:app.host:box", "system:app", "The box"],
+      ["system:app.container:cache", "system:app.host:box", "Valkey for the admin reads"],
     ]);
-    expect(g.nodes[0]?.attrs).toMatchObject({ title: "App", description: "Sends mail" });
-    expect(g.edges).toEqual([
-      {
-        from: "system:app.worker",
-        to: "system:mail",
-        kind: "calls",
-        attrs: { title: ["send", "bounce"], here: ["src/send.ts"], there: ["../mail/src/gone.ts"] },
-      },
+    const send = "apps/web/src/send.ts";
+    expect(g.edges.map((e) => [e.from, e.kind, e.to, e.attrs?.title, e.attrs?.here])).toEqual([
+      [
+        "system:app.worker:web",
+        "binds",
+        "system:app.d1:hits",
+        ["binding `hits`"],
+        ["apps/web/wrangler.toml"],
+      ],
+      ["system:app.worker:web", "calls", "system:mail", ["`APP_MAIL_URL`"], [send]],
+      ["system:app.worker:web", "uses", "system:stripe", ["`stripe`"], [send]],
     ]);
-    expect(await seams(root, g)).toEqual(["system:app.worker → system:mail: ../mail/src/gone.ts"]);
-    await rm(root, { recursive: true });
+    expect(await seams(root, g)).toEqual([]);
+    await rm(dirname(root), { recursive: true });
   }, 30_000);
 });
 
