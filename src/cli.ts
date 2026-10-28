@@ -6,11 +6,14 @@
  * kestrel stamp <card...>     mark cards read against the approved graph
  * kestrel view                the map as a local page: zoom, details, drift, notes
  * kestrel health              signals: cycles, flat folders, fan, weak interfaces, clones, unused
+ * kestrel cost                spend per node, from the repo's dump; local only, never committed
  */
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { Command } from "commander";
 import {
   checkCards,
@@ -22,6 +25,14 @@ import {
   stampOf,
 } from "./cards.js";
 import { type Config, LAYER_IDS, type LayerId, loadConfig } from "./config.js";
+import {
+  attribute,
+  type Cost,
+  CostDump,
+  page as costPage,
+  type Measures,
+  partOwners,
+} from "./cost.js";
 import { diff, formatChanges } from "./diff.js";
 import { byGroup } from "./graph.js";
 import { fromGraphs, page as healthPage, runTools } from "./health.js";
@@ -95,7 +106,17 @@ export async function check(opts: RunOptions): Promise<number> {
   if (config.cards) {
     const cards = await readCards(opts.root, config.cards.dir);
     const ix = indexOf(await approvedGraphs(store));
-    const issues = await checkCards(opts.root, cards, ix, config.cards.require);
+    const all = await checkCards(
+      opts.root,
+      cards,
+      ix,
+      config.cards.require,
+      await measures(opts.root, config.out),
+    );
+    const unmeasured = all.filter((i) => i.rule === "unmeasured");
+    if (unmeasured.length)
+      console.error(`\ntriggers: ${unmeasured.length} not measured\n${formatIssues(unmeasured)}`);
+    const issues = all.filter((i) => i.rule !== "unmeasured");
     if (issues.length) {
       console.error(`\ncards: ${issues.length} issues\n${formatIssues(issues)}`);
       console.error("Read each stale card against the map, fix it, then: kestrel stamp <card>.");
@@ -112,6 +133,45 @@ export async function approve(opts: RunOptions): Promise<void> {
     const changed = await store.approve(id);
     console.log(`${id}: ${changed.length ? `approved ${changed.length} groups` : "no change"}`);
   }
+}
+
+const readJson = <T>(file: string): Promise<T | null> =>
+  readFile(file, "utf8").then(
+    (t) => JSON.parse(t) as T,
+    () => null,
+  );
+
+/** What the stored reports measure, for decision triggers: nothing is run. */
+async function measures(root: string, out: string): Promise<Measures> {
+  return {
+    cost: await readJson<Cost>(resolve(root, out, "cost.current.json")),
+    health: await readJson<Measures["health"]>(resolve(root, out, "health.current.json")),
+  };
+}
+
+const run = promisify(execFile);
+
+/** Runs the repo's cost dump (or reuses the stored lines) and gives each line its owner. */
+export async function cost(root: string, o: { dump: boolean; config?: string }): Promise<Cost> {
+  const config = await loadConfig(root, o.config);
+  const c = config.cost;
+  if (!c) throw new Error("cost: no `cost` in kestrel.json");
+  const file = resolve(root, config.out, "cost.current.json");
+  let dump: CostDump;
+  if (o.dump) {
+    const { stdout } = await run("sh", ["-c", c.dump], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
+    dump = CostDump.parse(JSON.parse(stdout));
+  } else {
+    const was = await readJson<Cost>(file);
+    if (!was) throw new Error("cost: nothing stored; run kestrel cost first");
+    dump = CostDump.parse(was);
+  }
+  const imports = await fileStore(root, config.out).read("imports", "current");
+  const parts = c.parts && imports ? await partOwners(root, imports, c.parts) : new Map();
+  const out = attribute(dump, c.owners, parts);
+  await writeFile(file, `${JSON.stringify(out, null, 2)}\n`);
+  await writeFile(resolve(root, config.out, "cost.md"), costPage(out));
+  return out;
 }
 
 const approvedGraphs = async (store: ReturnType<typeof fileStore>) =>
@@ -163,6 +223,7 @@ export async function viewData(root: string, configFile?: string) {
       covers: coveredBy(c, now),
     })),
     require: config.cards?.require ?? [],
+    cost: await readJson<Cost>(resolve(root, config.out, "cost.current.json")),
   });
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(cache));
@@ -226,6 +287,18 @@ export function program(): Command {
             (h.duplicates ? `, ${h.duplicates.percent}% duplicated` : "") +
             (h.unused ? `, ${h.unused.exports.length} unused exports` : ""),
         );
+    });
+  p.command("cost")
+    .description("write the cost report from the repo's dump; local only, never commit it")
+    .option("--no-dump", "reuse the stored lines; only the owners are read again")
+    .action(async (o: { dump: boolean }) => {
+      const c = await cost(root(), { dump: o.dump, ...cfg() });
+      const total = c.lines.reduce((n, l) => n + l.usd, 0);
+      const none = c.lines.filter((l) => !l.owner);
+      console.log(
+        `cost: $${total.toFixed(2)} over ${c.days} days, ${none.length} lines with no owner` +
+          ` ($${none.reduce((n, l) => n + l.usd, 0).toFixed(2)})`,
+      );
     });
   p.command("view")
     .description("open the map as a local page")

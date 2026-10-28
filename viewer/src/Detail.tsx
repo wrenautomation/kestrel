@@ -363,6 +363,15 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
             </dd>
           </>
         )}
+        {d?.cost && (
+          <>
+            <dt>Cost</dt>
+            <dd>
+              ${d.cost.usd.toFixed(2)} in {d.cost.days} days:{" "}
+              {d.cost.lines.map((l) => `${l.key} $${l.usd.toFixed(2)}`).join(", ")}
+            </dd>
+          </>
+        )}
         {(d?.services.length ?? 0) > 0 && (
           <>
             <dt>Routes</dt>

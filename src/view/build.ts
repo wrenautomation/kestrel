@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { basename } from "node:path";
 import type { ELK as Elk, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api.js";
+import type { Cost } from "../cost.js";
 import { diff } from "../diff.js";
 import { type Edge, edgeId, type Graph, type Node } from "../graph.js";
 import type {
@@ -37,6 +38,8 @@ export interface ViewInput {
   cards?: CardView[];
   /** Node roles that need a card (`kestrel.json` cards.require). */
   require?: readonly string[];
+  /** `kestrel cost`'s stored report, when there is one. */
+  cost?: Cost | null;
 }
 
 /** Bump when `place` changes: the cache key is its input, not its code. */
@@ -376,6 +379,14 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
       d.exportCount = d.exports.length;
       d.inferred = d.exports.filter((e) => e.inferred).length;
     }
+  }
+
+  for (const l of input.cost?.lines ?? []) {
+    if (!l.owner || !nodes[l.owner]) continue;
+    const d = detail(l.owner);
+    d.cost ??= { usd: 0, days: input.cost?.days ?? 0, lines: [] };
+    d.cost.usd += l.usd;
+    d.cost.lines.push({ source: l.source, key: l.key, usd: l.usd });
   }
 
   // Lift file → file imports: each edge sits on the one level where its ends part.

@@ -74,6 +74,8 @@ export interface Detail {
   stories?: StoryRef[];
   /** The cards that cover it, entity card first. */
   cards: CardRef[];
+  /** What it cost to run over `days`, from `kestrel cost`: its own lines only. */
+  cost?: { usd: number; days: number; lines: { source: string; key: string; usd: number }[] };
 }
 
 /** A story as a file's detail lists it; `box` is the story file's own box. */

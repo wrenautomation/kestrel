@@ -73,6 +73,15 @@ const Health = z.object({
     ]),
 });
 
+const Cost = z.object({
+  /** Prints the spend lines as JSON (`CostDump` in cost.ts), run in the repo root. */
+  dump: z.string(),
+  /** `source:key` → node id, for what code cannot tell: `"aws:AWS Lambda": "system:wren.worker"`. */
+  owners: z.record(z.string(), z.string()).default({}),
+  /** A pattern whose group 1 is a part name in the code: the part's spend goes to its package. */
+  parts: z.string().optional(),
+});
+
 const Cards = z.object({
   dir: z.string().default("map"),
   /** Roles that must each have a card. */
@@ -93,6 +102,7 @@ export const Config = z.object({
     .default({}),
   cards: Cards.optional(),
   health: Health.default(Health.parse({})),
+  cost: Cost.optional(),
 });
 export type Config = z.infer<typeof Config>;
 

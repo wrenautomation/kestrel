@@ -1,12 +1,14 @@
 /**
  * The ICM cards' side of the map: the why, trade-offs and extension points. Kestrel reads only
  * their frontmatter: `type`, `entity` (a path that must exist), `covers` (generated node ids),
- * and `stamp` (the hash of those nodes when someone last read the card against them).
+ * `stamp` (the hash of those nodes when someone last read the card against them), and on a
+ * decision card `trigger` (the measure that says the choice is due again).
  */
 import { createHash } from "node:crypto";
 import { access, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { parse } from "yaml";
+import { type Measures, measure, Trigger } from "./cost.js";
 import { type Graph, type Node, normalize } from "./graph.js";
 
 export interface Card {
@@ -18,6 +20,8 @@ export interface Card {
   entity?: string;
   covers: string[];
   stamp?: string;
+  /** Decision cards: `trigger: {metric, node?, over}`. A bad one is kept as its error. */
+  trigger?: Trigger | { error: string };
   /** The first paragraph under a `## Why…` heading, else the first after the title. */
   why: string;
 }
@@ -25,7 +29,12 @@ export interface Card {
 export type CardIssue =
   | { rule: "coverage"; node: string }
   | { rule: "entity"; card: string; entity: string }
-  | { rule: "stale"; card: string };
+  | { rule: "stale"; card: string }
+  | { rule: "trigger"; card: string; error: string }
+  /** The trigger's measure is over its line: the decision is due again. */
+  | { rule: "switch"; card: string; trigger: Trigger; now: number }
+  /** No report on disk measures it: not a pass. */
+  | { rule: "unmeasured"; card: string; trigger: Trigger };
 
 /** Folders under the cards dir that hold no cards. */
 const SKIP = new Set(["generated", "_templates", "_meta", "node_modules"]);
@@ -60,12 +69,15 @@ export function parseCard(path: string, text: string): Card | null {
   const type = str(f.type);
   const entity = str(f.entity);
   const stamp = str(f.stamp);
+  const t = f.trigger === undefined ? undefined : Trigger.safeParse(f.trigger);
+  const trigger = t && (t.success ? t.data : { error: t.error.issues[0]?.message ?? "bad" });
   return {
     path,
     ...(type ? { type } : {}),
     ...(entity ? { entity } : {}),
     covers,
     ...(stamp ? { stamp } : {}),
+    ...(trigger ? { trigger } : {}),
     why: whyOf(text.slice(m[0].length)),
   };
 }
@@ -174,6 +186,7 @@ export async function checkCards(
   cards: readonly Card[],
   ix: CardIndex,
   require: readonly string[],
+  measures: Measures = { cost: null, health: null },
 ): Promise<CardIssue[]> {
   const issues: CardIssue[] = [];
   const held = new Set<string>();
@@ -187,6 +200,13 @@ export async function checkCards(
       if (!ok) issues.push({ rule: "entity", card: c.path, entity: p });
     }
     if (c.stamp && c.stamp !== stampOf(c, ix)) issues.push({ rule: "stale", card: c.path });
+    const t = c.trigger;
+    if (t && "error" in t) issues.push({ rule: "trigger", card: c.path, error: t.error });
+    else if (t) {
+      const now = measure(t, measures);
+      if (now === null) issues.push({ rule: "unmeasured", card: c.path, trigger: t });
+      else if (now > t.over) issues.push({ rule: "switch", card: c.path, trigger: t, now });
+    }
     for (const id of coveredBy(c, ix))
       for (let n = ix.nodes.get(id); n; n = n.parent ? ix.nodes.get(n.parent) : undefined) {
         if (held.has(n.id)) break;
@@ -200,13 +220,17 @@ export async function checkCards(
 
 export function formatIssues(issues: readonly CardIssue[]): string {
   return issues
-    .map((i) =>
-      i.rule === "coverage"
-        ? `  no card   ${i.node}`
-        : i.rule === "entity"
-          ? `  gone      ${i.card}: entity ${i.entity}`
-          : `  stale     ${i.card}`,
-    )
+    .map((i) => {
+      const what = (t: Trigger) => `${t.metric}${t.node ? ` ${t.node}` : ""}`;
+      if (i.rule === "coverage") return `  no card   ${i.node}`;
+      if (i.rule === "entity") return `  gone      ${i.card}: entity ${i.entity}`;
+      if (i.rule === "trigger") return `  trigger   ${i.card}: ${i.error}`;
+      if (i.rule === "switch")
+        return `  switch    ${i.card}: ${what(i.trigger)} is ${Math.round(i.now * 100) / 100}, over ${i.trigger.over}`;
+      if (i.rule === "unmeasured")
+        return `  no data   ${i.card}: ${what(i.trigger)} (run kestrel ${i.trigger.metric === "cost" ? "cost" : "health"})`;
+      return `  stale     ${i.card}`;
+    })
     .join("\n");
 }
 
