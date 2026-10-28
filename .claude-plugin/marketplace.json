@@ -1,5 +1,5 @@
 {
   "name": "kestrel",
   "owner": { "name": "Wren Automation" },
-  "plugins": [{ "name": "kestrel", "source": "./" }]
+  "plugins": [{ "name": "kestrel", "source": "./plugin" }]
 }
