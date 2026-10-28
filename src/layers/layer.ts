@@ -1,6 +1,6 @@
 /** The adapter seam: one file per tool, each turns a repo into a Graph and a Graph into pages. */
 import type { Config, LayerId } from "../config.js";
-import type { Graph } from "../model.js";
+import type { Graph } from "../graph.js";
 
 export interface LayerContext {
   root: string;

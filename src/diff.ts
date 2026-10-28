@@ -1,5 +1,5 @@
 /** Approved vs current, per group: what was added, removed or changed. */
-import type { Attrs, Graph } from "./model.js";
+import type { Attrs, Graph } from "./graph.js";
 import { todo } from "./todo.js";
 
 export type Change =

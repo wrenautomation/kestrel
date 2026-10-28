@@ -3,7 +3,7 @@
  * their frontmatter: `entity` (a path that must exist), `covers` (generated node ids), and
  * `stamp` (the hash of those nodes when someone last read the card against them).
  */
-import type { Graph } from "./model.js";
+import type { Graph } from "./graph.js";
 import { todo } from "./todo.js";
 
 export interface Card {

@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { todo } from "./todo.js";
 
-export const LAYER_IDS = ["imports", "api", "schema", "systems"] as const;
+export const LAYER_IDS = ["imports", "api", "routes", "schema", "systems"] as const;
 export type LayerId = (typeof LAYER_IDS)[number];
 
 const Imports = z.object({
@@ -14,6 +14,10 @@ const Imports = z.object({
 
 const Api = z.object({
   packages: z.array(z.string()).default(["packages/*"]),
+});
+
+const Routes = z.object({
+  packages: z.array(z.string()).default(["packages/*", "apps/*"]),
 });
 
 const Schema = z.object({
@@ -29,7 +33,7 @@ const Systems = z.object({
 
 const Cards = z.object({
   dir: z.string().default("map"),
-  /** Node kinds that must each have a card. */
+  /** Roles that must each have a card. */
   require: z.array(z.string()).default(["package", "table", "system"]),
 });
 
@@ -39,6 +43,7 @@ export const Config = z.object({
     .object({
       imports: Imports.optional(),
       api: Api.optional(),
+      routes: Routes.optional(),
       schema: Schema.optional(),
       systems: Systems.optional(),
     })

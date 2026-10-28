@@ -2,7 +2,7 @@
 /**
  * kestrel gen [layer...]      extract, write current + pages
  * kestrel check [layer...]    gen, then fail on drift vs approved, or a card issue
- * kestrel approve <layer> [group...]   current → approved (commit it: that is the approval)
+ * kestrel approve [layer...]  current → approved for the whole map (commit it: that is the approval)
  * kestrel stamp <card...>     mark cards read against the approved graph
  */
 import type { Command } from "commander";
@@ -27,8 +27,8 @@ export async function check(opts: RunOptions): Promise<number> {
   return todo(opts, diff, formatChanges, readCards, checkCards);
 }
 
-export async function approve(root: string, layer: LayerId, groups: string[]): Promise<void> {
-  return todo(root, layer, groups, fileStore);
+export async function approve(opts: RunOptions): Promise<void> {
+  return todo(opts, fileStore);
 }
 
 export async function stamp(root: string, cards: string[]): Promise<void> {
