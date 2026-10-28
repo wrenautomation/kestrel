@@ -10,6 +10,8 @@ export interface Pkg {
   dir: string;
   /** Subpath → repo-relative source file, from `exports`; `.` for the main entry. */
   entries: Record<string, string>;
+  /** package.json `description`: the box's one-liner. */
+  description?: string;
 }
 
 export async function packages(root: string, globs: string[]): Promise<Pkg[]> {
@@ -17,8 +19,17 @@ export async function packages(root: string, globs: string[]): Promise<Pkg[]> {
   for await (const dir of glob(globs, { cwd: root })) {
     const file = join(root, dir, "package.json");
     if (dir.includes("node_modules") || !existsSync(file)) continue;
-    const json = JSON.parse(await readFile(file, "utf8")) as { name?: string; exports?: unknown };
-    out.push({ name: json.name ?? dir, dir: `${dir}/`, entries: entries(dir, json.exports) });
+    const json = JSON.parse(await readFile(file, "utf8")) as {
+      name?: string;
+      exports?: unknown;
+      description?: string;
+    };
+    out.push({
+      name: json.name ?? dir,
+      dir: `${dir}/`,
+      entries: entries(dir, json.exports),
+      ...(json.description ? { description: json.description } : {}),
+    });
   }
   // Longest dir first, so a nested package wins over its parent.
   return out.sort((a, b) => b.dir.length - a.dir.length);
@@ -66,3 +77,22 @@ export const flat = (s: string) =>
     .replace(/(^|\s)\/\/[^\n]*/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+
+/** The first sentence, no end stop. */
+export const sentence = (s: string) =>
+  (s.match(/^.*?\.(\s|$)/)?.[0] ?? s).trim().replace(/\.$/, "");
+
+/** A file's one-liner: the first sentence of the doc comment at its top. */
+export function headerLine(text: string): string | undefined {
+  const m = text.match(/^(?:#!.*\n)?\s*\/\*\*([\s\S]*?)\*\//);
+  if (!m) return undefined;
+  const body = (m[1] ?? "")
+    .split("\n")
+    .map((l) => l.replace(/^\s*\*\s?/, "").trim())
+    .filter((l) => !l.startsWith("@"))
+    .join(" ")
+    // A design pointer is for the reader of the file, not the box.
+    .replace(/\s*\(designs\/[^)]*\)/g, "")
+    .trim();
+  return body ? sentence(body) : undefined;
+}

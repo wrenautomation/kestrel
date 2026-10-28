@@ -265,7 +265,82 @@ code {
   transition: stroke 0.18s var(--ease);
 }
 .shape-zone {
-  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 4%, var(--paper));
+  /* Translucent: lines under an open box still show. */
+  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 6%, transparent);
+}
+.box.zoned {
+  cursor: default;
+}
+.box .head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.box.zoned .head {
+  padding-right: 28px;
+}
+.box .desc {
+  font-size: 12px;
+  line-height: 15px;
+  color: var(--ink-2);
+  margin-top: 3px;
+}
+.far .box:not(.zoned) .desc {
+  display: none;
+}
+.box .fold {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--paper);
+  box-shadow: 0 0 0 1px var(--hair);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+.box:hover > .fold,
+.box.sel > .fold,
+.box.zoned > .fold,
+.box .fold:focus-visible {
+  opacity: 1;
+}
+.box .fold:hover {
+  background: var(--fill);
+}
+.depth {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.depth span {
+  min-width: 9ch;
+  text-align: center;
+}
+.depth button {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+.depth button:hover:not(:disabled) {
+  background: var(--fill);
+}
+.depth button:disabled {
+  opacity: 0.35;
 }
 .shape-zone .sk .s {
   stroke-dasharray: 7 5;
@@ -276,7 +351,7 @@ code {
 .box .label {
   font-weight: 650;
   /* About 11px on screen at any zoom out; the box's own size from 1x up. */
-  font-size: clamp(13.5px, calc(11px / var(--z, 1)), 28px);
+  font-size: min(clamp(13.5px, calc(11px / var(--z, 1)), 28px), var(--fit, 28px));
   line-height: 1.25;
 }
 .box .sub {

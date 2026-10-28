@@ -23,9 +23,6 @@ importers:
       dependency-cruiser:
         specifier: 18.6.0
         version: 18.6.0
-      elkjs:
-        specifier: 0.12.0
-        version: 0.12.0
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -63,9 +60,15 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.1.2
         version: 6.1.2(vite@8.3.4(@types/node@22.20.3)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@wrenautomation/orrery':
+        specifier: link:../orrery
+        version: link:../orrery
       '@xyflow/react':
         specifier: 12.12.0
         version: 12.12.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(immer@11.2.9)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      elkjs:
+        specifier: 0.12.0
+        version: 0.12.0
       react:
         specifier: 19.3.0
         version: 19.3.0

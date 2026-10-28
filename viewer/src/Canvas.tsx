@@ -1,3 +1,4 @@
+import { type Fold, type Marks, play, snapshot } from "@wrenautomation/orrery";
 import {
   BaseEdge,
   type Edge,
@@ -12,12 +13,25 @@ import {
   type ReactFlowInstance,
   useStore,
 } from "@xyflow/react";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { type CSSProperties, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import rough from "roughjs";
 import type { Drawable, Options } from "roughjs/bin/core";
-import type { LevelBox, TreeNode, ViewData } from "../../src/view/types";
+import type { TreeNode, ViewData } from "../../src/view/types";
+import { type Shown, shown } from "./layout";
+import { labelFit, ZONE } from "./size";
 
-type BoxData = { n: TreeNode; box: LevelBox; selected: boolean; near: boolean; dim: boolean };
+type BoxData = {
+  n: TreeNode;
+  w: number;
+  h: number;
+  open: boolean;
+  /** Has kids: a tab opens it in place. */
+  folds: boolean;
+  fanIn: number;
+  selected: boolean;
+  dim: boolean;
+  onToggle(id: string, on: boolean): void;
+};
 type LineData = {
   points: [number, number][];
   n: number;
@@ -29,7 +43,7 @@ type LineData = {
 
 /** Past this many lines a level reads as a hairball: draw them faint until a box is picked. */
 const FAINT_OVER = 60;
-/** Fit never shrinks a level below this; the minimap shows the rest. */
+/** Fit never shrinks the map below this; the minimap shows the rest. */
 const FIT_MIN = 0.45;
 
 /**
@@ -51,7 +65,7 @@ const SHAPE: Record<string, Shape> = {
 };
 /** A system part's kind → its shape. */
 const KIND: Record<string, Shape> = { s3: "drum", d1: "drum", kv: "drum", r2: "drum" };
-const shapeOf = (n: TreeNode): Shape =>
+export const shapeOf = (n: TreeNode): Shape =>
   SHAPE[n.role] ?? (n.kind ? KIND[n.kind] : undefined) ?? "rect";
 const sketch = rough.generator();
 const seedOf = (id: string) => {
@@ -60,7 +74,7 @@ const seedOf = (id: string) => {
   return (h >>> 0) % 2147483646 || 1;
 };
 /** Drum lid depth; the label moves down by it. */
-const lid = (h: number) => Math.min(8, h * 0.13);
+export const lid = (h: number) => Math.min(8, h * 0.13);
 
 const Sketch = memo(function Sketch({
   id,
@@ -121,13 +135,40 @@ const Sketch = memo(function Sketch({
   );
 });
 
+/** The box's second line: what it holds, or what it is. */
+function subOf(n: TreeNode, fanIn: number): string {
+  const what =
+    n.tables !== undefined
+      ? `${n.tables} table${n.tables === 1 ? "" : "s"}`
+      : n.sub
+        ? n.sub
+        : n.kids.length
+          ? `${n.files} file${n.files === 1 ? "" : "s"}`
+          : n.role;
+  return fanIn ? `${what} · ${fanIn} in` : what;
+}
+
+/** Break after - . / only, never inside a word. */
+const Label = ({ text }: { text: string }) => (
+  <span className="label">
+    {text.split(/(?<=[-./_])/).map((part, i) => (
+      // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed label
+      <span key={i}>
+        {part}
+        <wbr />
+      </span>
+    ))}
+  </span>
+);
+
 const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
-  const { n, box } = data;
-  const shape = shapeOf(n);
+  const { n, w, h, open } = data;
+  const shape = open ? "zone" : shapeOf(n);
   const cls = [
     "box",
     `shape-${shape}`,
     `role-${n.role}`,
+    open ? "zoned" : "",
     n.drift ? `drift-${n.drift}` : "",
     data.selected ? "sel" : "",
     data.dim ? "dim" : "",
@@ -135,35 +176,39 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
   return (
     <div
       className={cls}
+      data-box={n.id}
       style={{
-        width: box.w,
-        height: box.h,
-        ...(shape === "drum" ? { paddingTop: 2 * lid(box.h), paddingBottom: 2 } : {}),
+        width: w,
+        height: h,
+        ...(open ? { paddingTop: 10, height: h, justifyContent: "flex-start" } : {}),
+        ...(shape === "drum" ? { paddingTop: 2 * lid(h), paddingBottom: 2 } : {}),
+        ...(open
+          ? {}
+          : ({ "--fit": `${labelFit(n, w, h, shape === "drum" ? 16 : 0)}px` } as CSSProperties)),
       }}
       title={n.id}
     >
-      <Sketch id={n.id} shape={shape} w={box.w} h={box.h} />
+      <Sketch id={n.id} shape={shape} w={w} h={h} />
       <Handle type="target" position={Position.Left} className="h" />
-      <span className="label">
-        {/* Break after - . / only, never inside a word. */}
-        {n.label.split(/(?<=[-./_])/).map((part, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed label
-          <span key={i}>
-            {part}
-            <wbr />
-          </span>
-        ))}
-      </span>
-      <span className="sub">
-        {n.tables !== undefined
-          ? `${n.tables} table${n.tables === 1 ? "" : "s"}`
-          : n.sub
-            ? n.sub
-            : n.kids.length
-              ? `${n.files} file${n.files === 1 ? "" : "s"}`
-              : n.role}
-        {box.fanIn ? ` · ${box.fanIn} in` : ""}
-      </span>
+      <div className="head" style={open ? { height: ZONE.top - 14 } : undefined}>
+        <Label text={n.label} />
+        <span className="sub">{subOf(n, data.fanIn)}</span>
+        {n.line && <span className="desc">{n.line}</span>}
+      </div>
+      {data.folds && (
+        <button
+          type="button"
+          className="fold"
+          aria-label={open ? `Fold ${n.label}` : `Open ${n.label} in place`}
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onToggle(n.id, !open);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          {open ? "−" : "+"}
+        </button>
+      )}
       {n.badge && (
         <span className={`badge ${n.badge}`}>{n.badge === "none" ? "no card" : "stale"}</span>
       )}
@@ -195,7 +240,7 @@ function Line({ id, data, markerEnd }: EdgeProps<Edge<LineData>>) {
   );
 }
 
-/** Labels grow as the view shrinks, so a wide level still reads at fit. */
+/** Labels grow as the view shrinks, so a wide map still reads at fit. */
 function ZoomVar() {
   const z = useStore((s) => s.transform[2]);
   const el = useStore((s) => s.domNode);
@@ -211,77 +256,169 @@ const edgeTypes = { line: Line };
 
 interface Props {
   data: ViewData;
+  /** The box drawn as the canvas. */
   focus: string;
+  fold: Fold;
   sel: string | undefined;
   onSelect(id: string | undefined): void;
-  onOpen(id: string): void;
+  /** Open or fold a box in place. */
+  onToggle(id: string, on: boolean): void;
 }
 
-export function Canvas({ data, focus, sel, onSelect, onOpen }: Props) {
-  const level = data.levels[focus];
+/** A flat level fits no smaller than FIT_MIN, to keep labels readable; a frame with open boxes fits whole. */
+const fitOf = (folded: boolean) => ({
+  padding: 0.12,
+  maxZoom: 1.1,
+  minZoom: folded ? 0.04 : FIT_MIN,
+});
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
+  // The last laid-out frame stays until the next is ready.
+  const [laid, setLaid] = useState<{ root: string; map: Shown }>();
+  const rf = useRef<ReactFlowInstance<Node<BoxData>, Edge<LineData>>>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const marks = useMemo<Marks>(
+    () => ({
+      select: "[data-box]",
+      key: (el) => (el as HTMLElement).dataset.box ?? null,
+      fresh: ".react-flow__edge",
+      units: () => 1 / (rf.current?.getZoom() ?? 1),
+    }),
+    [],
+  );
+  const pending = useRef<ReturnType<typeof snapshot> | null>(null);
+  const shownRoot = useRef<string>(undefined);
+
+  useEffect(() => {
+    let live = true;
+    const top = (n: TreeNode) => (shapeOf(n) === "drum" ? 16 : 0);
+    shown(data, focus, fold, top).then((map) => {
+      if (!live) return;
+      // Same root: glide from where the boxes stand now.
+      pending.current =
+        shownRoot.current === focus && !reduced() ? snapshot(wrap.current, marks) : null;
+      shownRoot.current = focus;
+      setLaid({ root: focus, map });
+    });
+    return () => {
+      live = false;
+    };
+  }, [data, focus, fold, marks]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per new frame
+  useEffect(() => {
+    const before = pending.current;
+    pending.current = null;
+    if (!before || !wrap.current) return;
+    // xyflow writes positions a frame after the commit. Fit first: the glide starts from the old
+    // screen spots, so one motion covers the move and the zoom.
+    const el = wrap.current;
+    let id = requestAnimationFrame(() => {
+      const m = laid?.map;
+      if (m && !data.levels[focus]?.grid)
+        void rf.current?.fitView(fitOf(m.boxes.some((b) => b.open)));
+      id = requestAnimationFrame(() => play({ before, next: el, marks }));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [laid, marks]);
+
+  const map = laid?.map;
+  const lines = useMemo(() => {
+    if (!map) return [];
+    const at = new Map(map.boxes.map((b) => [b.id, b]));
+    return map.levels.flatMap((lv) => {
+      const level = data.levels[lv.id];
+      if (!level) return [];
+      return level.edges.map((e, i) => {
+        const route = lv.laid.extra?.[i];
+        const a = at.get(e.from);
+        const b = at.get(e.to);
+        const points: [number, number][] = route?.length
+          ? route.map(([x, y]) => [x + lv.x, y + lv.y])
+          : a && b
+            ? [
+                [a.x + a.w / 2, a.y + a.h / 2],
+                [b.x + b.w / 2, b.y + b.h / 2],
+              ]
+            : [];
+        return {
+          id: `${lv.id}#${i}`,
+          ...e,
+          points,
+          grid: !route?.length,
+          crowd: level.edges.length,
+        };
+      });
+    });
+  }, [map, data]);
+
   const near = useMemo(() => {
     const s = new Set<string>();
-    for (const e of level?.edges ?? []) {
+    for (const e of lines) {
       if (e.from === sel) s.add(e.to);
       if (e.to === sel) s.add(e.from);
     }
     return s;
-  }, [level, sel]);
+  }, [lines, sel]);
 
+  const fanIn = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of Object.values(data.levels)) for (const b of l.boxes) m.set(b.id, b.fanIn);
+    return m;
+  }, [data]);
   const nodes = useMemo<Node<BoxData>[]>(
     () =>
-      (level?.boxes ?? []).map((b) => ({
-        id: b.id,
-        type: "box",
-        position: { x: b.x, y: b.y },
-        width: b.w,
-        height: b.h,
-        draggable: false,
-        data: {
-          n: data.nodes[b.id] as TreeNode,
-          box: b,
-          selected: b.id === sel,
-          near: near.has(b.id),
-          // A level with no lines has nothing to dim toward.
-          dim: !!sel && (level?.edges.length ?? 0) > 0 && b.id !== sel && !near.has(b.id),
-        },
-      })),
-    [level, data, sel, near],
-  );
-  const edges = useMemo<Edge<LineData>[]>(() => {
-    const at = new Map((level?.boxes ?? []).map((b) => [b.id, b]));
-    // A grid level has no routed lines: draw the selected box's, straight, centre to centre.
-    const straight = (from: string, to: string): [number, number][] => {
-      const a = at.get(from);
-      const b = at.get(to);
-      if (!a || !b) return [];
-      return [
-        [a.x + a.w / 2, a.y + a.h / 2],
-        [b.x + b.w / 2, b.y + b.h / 2],
-      ];
-    };
-    return (level?.edges ?? []).flatMap((e, i) => {
-      const hot = !!sel && (e.from === sel || e.to === sel);
-      if (level?.grid && !hot) return [];
-      return [
-        {
-          id: `e${i}`,
-          source: e.from,
-          target: e.to,
-          type: "line",
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      (map?.boxes ?? []).map((b) => {
+        const n = data.nodes[b.id] as TreeNode;
+        return {
+          id: b.id,
+          type: "box",
+          position: { x: b.x, y: b.y },
+          width: b.w,
+          height: b.h,
+          draggable: false,
           data: {
-            points: level?.grid ? straight(e.from, e.to) : e.points,
-            n: e.n,
-            type: e.type,
-            hot,
-            dim: !!sel && !hot,
-            faint: !sel && (level?.edges.length ?? 0) > FAINT_OVER,
+            n,
+            w: b.w,
+            h: b.h,
+            open: b.open,
+            folds: !!data.levels[b.id],
+            fanIn: fanIn.get(b.id) ?? 0,
+            selected: b.id === sel,
+            dim: !!sel && b.id !== sel && !near.has(b.id) && !b.open,
+            onToggle,
           },
-        },
-      ];
-    });
-  }, [level, sel]);
+        };
+      }),
+    [map, data, fanIn, sel, near, onToggle],
+  );
+  const edges = useMemo<Edge<LineData>[]>(
+    () =>
+      lines.flatMap((e) => {
+        const hot = !!sel && (e.from === sel || e.to === sel);
+        // A grid has no routed lines: the selected box's only, straight.
+        if (e.grid && !hot) return [];
+        return [
+          {
+            id: e.id,
+            source: e.from,
+            target: e.to,
+            type: "line",
+            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+            data: {
+              points: e.points,
+              n: e.n,
+              type: e.type,
+              hot,
+              dim: !!sel && !hot,
+              faint: !sel && e.crowd > FAINT_OVER,
+            },
+          },
+        ];
+      }),
+    [lines, sel],
+  );
 
   // Arrows move the selection to the nearest box that way.
   useEffect(() => {
@@ -291,7 +428,7 @@ export function Canvas({ data, focus, sel, onSelect, onOpen }: Props) {
       ];
       if (!dir || (ev.target as HTMLElement).closest("input, textarea, select")) return;
       ev.preventDefault();
-      const boxes = level?.boxes ?? [];
+      const boxes = map?.boxes ?? [];
       const cur = boxes.find((b) => b.id === sel);
       if (!cur) {
         const first = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x)[0];
@@ -315,51 +452,54 @@ export function Canvas({ data, focus, sel, onSelect, onOpen }: Props) {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [level, sel, onSelect]);
+  }, [map, sel, onSelect]);
 
-  // A grid opens at its top, full width: the most used files first, like a list.
-  const wrap = useRef<HTMLDivElement>(null);
+  const rootLevel = data.levels[focus];
+  // A grid opens at its top, full width: the most used first, like a list.
   const onInit = useCallback(
-    (rf: ReactFlowInstance<Node<BoxData>, Edge<LineData>>) => {
-      if (!level?.grid) return;
+    (inst: ReactFlowInstance<Node<BoxData>, Edge<LineData>>) => {
+      rf.current = inst;
+      if (!rootLevel?.grid || !map) return;
       const w = wrap.current?.clientWidth ?? 1000;
-      const zoom = Math.min(1.1, Math.max(FIT_MIN, (w - 32) / level.w));
-      rf.setViewport({ x: 16, y: 104, zoom });
+      const zoom = Math.min(1.1, Math.max(FIT_MIN, (w - 32) / map.w));
+      inst.setViewport({ x: 16, y: 104, zoom });
     },
-    [level],
+    [rootLevel, map],
   );
 
-  if (!level) return <div className="canvas msg">Nothing inside {focus}.</div>;
+  if (!rootLevel) return <div className="canvas msg">Nothing inside {focus}.</div>;
+  if (!laid || !map) return <div className="canvas msg">Laying out…</div>;
+  const closed = map.boxes.filter((b) => !b.parent).length;
   return (
     <div className="canvas" ref={wrap}>
-      {level.grid && (
+      {rootLevel.grid && map.boxes.every((b) => !b.open) && (
         <p className="hint">
-          {level.edges.length
-            ? `${level.boxes.length} boxes in one folder: too flat for a graph. Sorted by fan-in; select a box to see its lines.`
-            : `${level.boxes.length} boxes, no lines between them, in their own order.`}
+          {rootLevel.edges.length
+            ? `${closed} boxes in one folder: too flat for a graph. Sorted by fan-in; select a box to see its lines.`
+            : `${closed} boxes, no lines between them, in their own order.`}
         </p>
       )}
       <ReactFlow
-        key={focus}
+        key={laid.root}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        fitView={!level.grid}
-        fitViewOptions={{ padding: 0.12, maxZoom: 1.1, minZoom: FIT_MIN }}
+        fitView={!rootLevel.grid}
+        fitViewOptions={fitOf(map.boxes.some((b) => b.open))}
         onInit={onInit}
-        minZoom={0.05}
+        minZoom={0.02}
         maxZoom={2.5}
         nodesConnectable={false}
         nodesDraggable={false}
         elementsSelectable={false}
         onlyRenderVisibleElements
         onNodeClick={(_, n) => onSelect(n.id === sel ? undefined : n.id)}
-        onNodeDoubleClick={(_, n) => onOpen(n.id)}
+        onNodeDoubleClick={(_, n) => data.levels[n.id] && onToggle(n.id, !n.data.open)}
         onPaneClick={() => onSelect(undefined)}
       >
         <ZoomVar />
-        {level.boxes.length > 12 && (
+        {map.boxes.length > 12 && (
           <MiniMap
             pannable
             zoomable

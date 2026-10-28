@@ -1,6 +1,6 @@
 /**
- * What `kestrel view` sends the page: one tree over every layer, and a laid-out level per
- * container. The page runs no layout and no graph math; it draws a level and shows a detail.
+ * What `kestrel view` sends the page: one tree over every layer, and each container's kids with
+ * their lifted lines. The page lays out the shown levels (orrery `nest`) and shows a detail.
  */
 import type { Attrs } from "../graph.js";
 
@@ -20,6 +20,8 @@ export interface TreeNode {
   tables?: number;
   /** The box's second line when files or tables say nothing: a system's kind or part count. */
   sub?: string;
+  /** One line on what it is for, from code: package.json, a header comment, a deploy file. */
+  line?: string;
   /** A system part's kind: `container`, `s3`, `worker`. Picks its shape. */
   kind?: string;
   /** Place among its siblings when the layer gives one (an app's pages in tab order). */
@@ -115,13 +117,10 @@ export interface Link {
 
 export interface LevelBox {
   id: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
   fanIn: number;
 }
 
+/** A line between two kids of one container: every import (or key, call) below them, lifted. */
 export interface LevelEdge {
   from: string;
   to: string;
@@ -129,27 +128,15 @@ export interface LevelEdge {
   n: number;
   /** Every one is type-only. */
   type: boolean;
-  /** Polyline from the layout, start to end. */
-  points: [number, number][];
 }
 
+/** A container's kids, in draw order, and the lines between them. No positions: the page lays out. */
 export interface Level {
-  w: number;
-  h: number;
-  /** Too many boxes for a readable graph: a grid by fan-in, lines only for the selected box. */
+  /** Too many boxes, or no lines: a grid in this order (by fan-in), lines only for the selected box. */
   grid?: boolean;
   boxes: LevelBox[];
   edges: LevelEdge[];
 }
-
-/** Layouts by a hash of their input, so an unchanged level skips ELK. */
-export type LayoutCache = Record<
-  string,
-  Pick<Level, "w" | "h" | "grid"> & {
-    boxes: [string, number, number][];
-    points: [number, number][][];
-  }
->;
 
 export interface ViewData {
   repo: string;

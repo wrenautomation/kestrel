@@ -11,8 +11,8 @@
  */
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Command } from "commander";
@@ -43,7 +43,6 @@ import { packet } from "./packet.js";
 import { fileStore } from "./store.js";
 import { buildView } from "./view/build.js";
 import { serve } from "./view/serve.js";
-import type { LayoutCache } from "./view/types.js";
 
 export interface RunOptions {
   root: string;
@@ -209,11 +208,6 @@ export async function viewData(root: string, configFile?: string) {
   }
   if (!Object.values(current).some(Boolean))
     throw new Error(`no map under ${config.out}; run kestrel gen first`);
-  // Babel's and ESLint's spot: never committed, and gone with a clean install.
-  const file = resolve(root, "node_modules/.cache/kestrel/view.json");
-  const cache: LayoutCache = await readFile(file, "utf8")
-    .then((t) => JSON.parse(t) as LayoutCache)
-    .catch(() => ({}));
   const cards = config.cards ? await readCards(root, config.cards.dir) : [];
   const was = indexOf(Object.values(approved).filter((g) => g !== null));
   const now = indexOf(Object.values(current).filter((g) => g !== null));
@@ -221,7 +215,6 @@ export async function viewData(root: string, configFile?: string) {
     root,
     current,
     approved,
-    cache,
     cards: cards.map((c) => ({
       path: c.path,
       type: c.type ?? "card",
@@ -232,8 +225,6 @@ export async function viewData(root: string, configFile?: string) {
     require: config.cards?.require ?? [],
     cost: await readJson<Cost>(resolve(root, config.out, "cost.current.json")),
   });
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(cache));
   return view;
 }
 

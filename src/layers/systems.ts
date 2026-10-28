@@ -22,6 +22,7 @@ import { isMap, isScalar, parseDocument } from "yaml";
 import type { SystemsConfig } from "../config.js";
 import type { Attr, Edge, Graph, Node } from "../graph.js";
 import type { Layer, LayerContext } from "./layer.js";
+import { sentence } from "./workspace.js";
 
 export interface Unit {
   /** `<kind>:<name>`: `worker:portal`, `lambda:worker`, `container:valkey`. */
@@ -45,8 +46,6 @@ export interface Link {
 }
 
 const tick = (s: string) => `\`${s}\``;
-const sentence = (s: string) => (s.match(/^.*?\.(\s|$)/)?.[0] ?? s).trim().replace(/\.$/, "");
-
 /** `#` lines above line `at` (one blank line between is fine), joined. */
 function commentAbove(lines: readonly string[], at: number): string {
   const out: string[] = [];

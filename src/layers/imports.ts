@@ -1,16 +1,18 @@
 /**
  * Who imports whom, from dependency-cruiser. Nodes: each package and each source file in it.
  * Edges: file → file, and package → package where any file crosses. Type-only imports are
- * edges too, marked `type: true`: a type still couples two files.
+ * edges too, marked `type: true`: a type still couples two files. A one-liner (`description`) is
+ * the package.json description or the first sentence of a file's header comment.
  */
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { cruise } from "dependency-cruiser";
 import extractTSConfig from "dependency-cruiser/config-utl/extract-ts-config";
 import { Imports } from "../config.js";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
-import { type Pkg, packages } from "./workspace.js";
+import { headerLine, type Pkg, packages } from "./workspace.js";
 
 interface CruiseModule {
   source: string;
@@ -76,7 +78,7 @@ export const imports: Layer = {
         role: "package",
         parent: repo,
         group: p.name,
-        attrs: { dir: p.dir },
+        attrs: { dir: p.dir, ...(p.description ? { description: p.description } : {}) },
       });
       npm.set(p.name, new Set());
     }
@@ -84,7 +86,14 @@ export const imports: Layer = {
       const from = ownerOf(m.source);
       if (!from || m.source.includes("node_modules")) continue;
       const id = fileId(from, m.source);
-      nodes.push({ id, role: "file", parent: from.name, group: from.name });
+      const line = headerLine(await readFile(join(root, m.source), "utf8").catch(() => ""));
+      nodes.push({
+        id,
+        role: "file",
+        parent: from.name,
+        group: from.name,
+        ...(line ? { attrs: { description: line } } : {}),
+      });
       for (const d of m.dependencies) {
         const type = d.dependencyTypes.includes("type-only");
         const path = d.resolved;

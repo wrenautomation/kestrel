@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Edge, Graph, Node } from "../graph.js";
 import { fromDump } from "../layers/ui.js";
 import { buildView, GRID_OVER } from "./build.js";
-import type { LayoutCache } from "./types.js";
 
 const pkg = (id: string, dir: string): Node => ({ id, role: "package", group: id, attrs: { dir } });
 const file = (p: string, rel: string): Node => ({
@@ -53,12 +52,11 @@ const api: Graph = {
   edges: [],
 };
 
-const view = (current: Graph, approved: Graph | null = null, cache?: LayoutCache) =>
+const view = (current: Graph, approved: Graph | null = null) =>
   buildView({
     root: "/r",
     current: { imports: current, api },
     approved: { imports: approved, api: approved ? api : null },
-    ...(cache ? { cache } : {}),
   });
 
 describe("buildView", () => {
@@ -80,9 +78,6 @@ describe("buildView", () => {
     expect(at("repo:r")).toEqual([["dir:apps", "dir:packages", 1, false]]);
     expect(at("@s/a")).toEqual([["@s/a/src/x.ts", "folder:@s/a/deep", 1, false]]);
     expect(v.details["@s/b"]?.usedBy).toEqual([{ id: "@s/a", n: 2, type: false }]);
-    // Laid out: every box placed, every line routed.
-    expect(v.levels["dir:packages"]?.boxes.every((b) => b.w > 0 && b.h > 0)).toBe(true);
-    expect(v.levels["dir:packages"]?.edges[0]?.points.length).toBeGreaterThan(1);
   });
 
   it("puts exports in their file's detail and counts them up the tree", async () => {
@@ -108,20 +103,17 @@ describe("buildView", () => {
     const v = await view(g);
     const lvl = v.levels["@s/b"];
     expect(lvl?.grid).toBe(true);
-    const top = lvl?.boxes.find((b) => b.x === 0 && b.y === 0);
-    expect(top?.id).toBe("@s/b/src/f9.ts");
+    expect(lvl?.boxes[0]?.id).toBe("@s/b/src/f9.ts");
     expect(v.levels["@s/a"]?.grid).toBeUndefined();
   });
 
-  it("reuses a cached layout and drops entries no level used", async () => {
-    const cache: LayoutCache = { stale: { w: 0, h: 0, boxes: [], points: [] } };
-    const a = await view(imports(), null, cache);
-    expect(cache.stale).toBeUndefined();
-    const keys = Object.keys(cache).sort();
-    expect(keys).toHaveLength(Object.keys(a.levels).length);
-    const b = await view(imports(), null, cache);
-    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
-    expect(Object.keys(cache).sort()).toEqual(keys);
+  it("puts a layer's one-liner on its box", async () => {
+    const g = imports();
+    const pkg = g.nodes.find((n) => n.id === "@s/a");
+    if (pkg) pkg.attrs = { ...pkg.attrs, description: "Does a." };
+    const v = await view(g);
+    expect(v.nodes["@s/a"]?.line).toBe("Does a.");
+    expect(v.nodes["@s/b"]?.line).toBeUndefined();
   });
 
   it("puts a card on each box it covers, and badges a package with none", async () => {

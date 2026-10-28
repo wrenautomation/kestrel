@@ -1,13 +1,10 @@
 /**
  * Every layer's graph → one tree to zoom (repo → top folder → package → source folder → file,
  * repo → database → schema → table, repo → systems → system → part, and repo → screens → app →
- * screen), each level laid out once with ELK. Exports and routes are not boxes: they sit in their file's
- * detail, so a level stays a readable dependency graph.
+ * screen), with each level's lines lifted to its kids. Exports and routes are not boxes: they sit in
+ * their file's detail, so a level stays a readable dependency graph. The page lays levels out.
  */
-import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import { basename } from "node:path";
-import type { ELK as Elk, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api.js";
 import type { Cost } from "../cost.js";
 import { diff } from "../diff.js";
 import { type Edge, edgeId, type Graph, type Node } from "../graph.js";
@@ -15,7 +12,6 @@ import type {
   CardView,
   Detail,
   Drift,
-  LayoutCache,
   Level,
   LevelEdge,
   Link,
@@ -26,15 +22,10 @@ import type {
   ViewData,
 } from "./types.js";
 
-// elkjs is CommonJS; its default export does not survive NodeNext's interop.
-const ELK: new () => Elk = createRequire(import.meta.url)("elkjs/lib/elk.bundled.js");
-
 export interface ViewInput {
   root: string;
   current: Record<string, Graph | null>;
   approved: Record<string, Graph | null>;
-  /** Read and filled in place: layouts by input hash. Entries no level used are dropped. */
-  cache?: LayoutCache;
   cards?: CardView[];
   /** Node roles that need a card (`kestrel.json` cards.require). */
   require?: readonly string[];
@@ -42,10 +33,7 @@ export interface ViewInput {
   cost?: Cost | null;
 }
 
-/** Bump when `place` changes: the cache key is its input, not its code. */
-const LAYOUT_VERSION = 4;
-
-/** Over this many boxes a layered graph is a hairball, and ELK takes seconds. */
+/** Over this many boxes a layered graph is a hairball, and ELK takes seconds: a grid by fan-in. */
 export const GRID_OVER = 40;
 
 const emptyDetail = (): Detail => ({
@@ -565,46 +553,15 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     for (const n of Object.values(nodes))
       if (!n.badge && input.require?.includes(n.role) && !held.has(n.id)) n.badge = "none";
 
-  // Lay out every container's kids once.
-  const elk = new ELK();
-  const cache = input.cache ?? {};
-  const used: LayoutCache = {};
-  /** ELK for a readable level; a grid by fan-in for a flat one, lines left to the page. */
-  const place = async (graph: ElkNode, grid: boolean): Promise<LayoutCache[string]> => {
-    const kids = graph.children ?? [];
-    if (grid) {
-      const order = [...kids].sort(
-        (a, b) => (fanIn.get(b.id) ?? 0) - (fanIn.get(a.id) ?? 0) || byOrder(a.id, b.id),
-      );
-      const cols = Math.min(8, Math.ceil(Math.sqrt(order.length * 1.8)));
-      const cw = Math.max(...order.map((k) => k.width ?? 0)) + 24;
-      const rh = Math.max(...order.map((k) => k.height ?? 0)) + 24;
-      return {
-        w: cols * cw,
-        h: Math.ceil(order.length / cols) * rh,
-        grid: true,
-        boxes: order.map((k, i) => [k.id, (i % cols) * cw, Math.floor(i / cols) * rh]),
-        points: [],
-      };
+  // One-liners: any layer's `description`, on the box that shows the node.
+  for (const g of Object.values(input.current))
+    for (const n of g?.nodes ?? []) {
+      const d = n.attrs?.description;
+      const t = nodes[n.id];
+      if (t && typeof d === "string" && d) t.line = d;
     }
-    const out = await elk.layout(graph);
-    return {
-      w: Math.round(out.width ?? 0),
-      h: Math.round(out.height ?? 0),
-      boxes: (out.children ?? []).map((b) => [b.id, Math.round(b.x ?? 0), Math.round(b.y ?? 0)]),
-      points: ((out.edges ?? []) as ElkExtendedEdge[])
-        .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
-        .map((e) => {
-          const q = e.sections?.[0];
-          return q
-            ? [q.startPoint, ...(q.bendPoints ?? []), q.endPoint].map((v) => [
-                Math.round(v.x),
-                Math.round(v.y),
-              ])
-            : [];
-        }),
-    };
-  };
+
+  // Each container's kids and the lines between them; the page lays them out (orrery `nest`).
   const levels: Record<string, Level> = {};
   /** Tab order where the layer gives one (apps, pages), else by id. */
   const byOrder = (a: string, b: string) =>
@@ -615,72 +572,23 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
       const to = k.split("\0")[1] as string;
       fanIn.set(to, (fanIn.get(to) ?? 0) + 1);
     }
-  await Promise.all(
-    Object.values(nodes)
-      .filter((n) => n.kids.length)
-      .map(async (c) => {
-        const m = levelEdges.get(c.id) ?? new Map<string, Acc>();
-        const size = (id: string) => {
-          const n = nodes[id] as TreeNode;
-          const s = 1 + Math.min(0.5, Math.log2(1 + (fanIn.get(id) ?? 0)) / 10);
-          // The second line is smaller type: a long one (`list of delivery.step`) widens the box too.
-          const text = Math.max(n.label.length * 7.6, (n.sub?.length ?? 0) * 6.6);
-          const w = Math.max(132, Math.min(300, text + 48));
-          return { width: Math.round(w * s), height: Math.round(52 * s) };
-        };
-        const edges = [...m].map(([k, a], i) => {
-          const [from, to] = k.split("\0") as [string, string];
-          return { id: `e${i}`, sources: [from], targets: [to], from, to, ...a };
-        });
-        const graph: ElkNode = {
-          id: c.id,
-          layoutOptions: {
-            "elk.algorithm": "layered",
-            "elk.direction": "RIGHT",
-            "elk.edgeRouting": "ORTHOGONAL",
-            "elk.layered.spacing.nodeNodeBetweenLayers": "56",
-            "elk.spacing.nodeNode": "28",
-            "elk.spacing.componentComponent": "40",
-            "elk.aspectRatio": "1.8",
-            "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-          },
-          children: [...c.kids].sort(byOrder).map((id) => ({ id, ...size(id) })),
-          edges: edges.map(({ id, sources, targets }) => ({ id, sources, targets })),
-        };
-        const key = createHash("sha1")
-          .update(`${LAYOUT_VERSION}${JSON.stringify(graph)}`)
-          .digest("base64url");
-        // No lines: ELK packs the boxes by size and loses their order; a grid keeps it.
-        const hit = cache[key] ?? (await place(graph, c.kids.length > GRID_OVER || !edges.length));
-        used[key] = hit;
-        const at = new Map(hit.boxes.map(([id, x, y]) => [id, { x, y }]));
-        levels[c.id] = {
-          w: hit.w,
-          h: hit.h,
-          ...(hit.grid ? { grid: true } : {}),
-          boxes: (graph.children ?? []).map((b) => ({
-            id: b.id,
-            ...(at.get(b.id) ?? { x: 0, y: 0 }),
-            w: b.width ?? 0,
-            h: b.height ?? 0,
-            fanIn: fanIn.get(b.id) ?? 0,
-          })),
-          edges: edges.map(
-            (e, i): LevelEdge => ({
-              from: e.from,
-              to: e.to,
-              n: e.n,
-              type: e.type,
-              points: hit.points[i] ?? [],
-            }),
-          ),
-        };
-      }),
-  );
   for (const n of Object.values(nodes)) n.kids.sort(byOrder);
-  if (input.cache) {
-    for (const k of Object.keys(input.cache)) delete input.cache[k];
-    Object.assign(input.cache, used);
+  for (const c of Object.values(nodes)) {
+    if (!c.kids.length) continue;
+    const edges = [...(levelEdges.get(c.id) ?? new Map<string, Acc>())].map(([k, a]): LevelEdge => {
+      const [from, to] = k.split("\0") as [string, string];
+      return { from, to, n: a.n, type: a.type };
+    });
+    // No lines: a layered layout packs the boxes by size and loses their order; a grid keeps it.
+    const grid = c.kids.length > GRID_OVER || !edges.length;
+    const ids = grid
+      ? [...c.kids].sort((a, b) => (fanIn.get(b) ?? 0) - (fanIn.get(a) ?? 0) || byOrder(a, b))
+      : c.kids;
+    levels[c.id] = {
+      ...(grid ? { grid: true } : {}),
+      boxes: ids.map((id) => ({ id, fanIn: fanIn.get(id) ?? 0 })),
+      edges,
+    };
   }
 
   const counts: Record<string, number> = {
@@ -700,7 +608,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     approved: approvedAny,
     nodes,
     details,
-    // Fixed key order: cache hits finish first, and a dump should not churn.
+    // Fixed key order: a dump should not churn.
     levels: Object.fromEntries(Object.entries(levels).sort(([a], [b]) => a.localeCompare(b))),
     index,
     counts,

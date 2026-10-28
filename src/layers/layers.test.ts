@@ -9,6 +9,7 @@ import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { seams, systems } from "./systems.js";
 import { readStory } from "./ui.js";
+import { headerLine } from "./workspace.js";
 
 const FILES: Record<string, string> = {
   "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "NodeNext" } }),
@@ -268,5 +269,20 @@ export const One = { args: { id: "n1" } };
       id: "bare",
       title: "bare",
     });
+  });
+});
+
+describe("headerLine", () => {
+  it("takes the first sentence of the top doc comment", () => {
+    expect(headerLine("/**\n * Reads mail. Then more.\n * @see x\n */\nexport const a = 1;")).toBe(
+      "Reads mail",
+    );
+    expect(headerLine("#!/usr/bin/env node\n/** The CLI. */")).toBe("The CLI");
+    expect(headerLine("/** Email sequences (designs/2026-10-04-x.md, O2): its mailboxes. */")).toBe(
+      "Email sequences: its mailboxes",
+    );
+  });
+  it("skips a doc comment that is not at the top", () => {
+    expect(headerLine('import x from "x";\n/** A. */\nexport const a = 1;')).toBeUndefined();
   });
 });

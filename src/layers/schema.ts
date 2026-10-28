@@ -23,6 +23,8 @@ export interface Tbls {
   tables: {
     name: string;
     type: string;
+    /** `COMMENT ON TABLE`: the box's one-liner. */
+    comment?: string;
     columns: { name: string; type: string; nullable: boolean; default?: string | null }[];
     indexes?: { name: string; def: string }[];
     constraints?: { name: string; type: string; def: string }[];
@@ -73,6 +75,7 @@ export function fromTbls(t: Tbls, pick: Pick = {}, migrations: string[] = []): G
         ),
         // Indexes are their own nodes; a primary or unique key shows both ways, as Postgres has it.
         constraints: (tb.constraints ?? []).map((c) => `${c.name}: ${c.def}`).sort(),
+        ...(tb.comment ? { description: tb.comment } : {}),
       },
     });
     for (const ix of tb.indexes ?? [])
