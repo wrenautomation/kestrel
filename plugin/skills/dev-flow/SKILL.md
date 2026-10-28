@@ -9,8 +9,8 @@ The repo has two layers. The **generated map** (`map/generated/`) is the shape, 
 code. The owner approves it as a whole, and the approval is a commit. The **cards** (`map/`) hold
 the why. For how to write cards in this mode, read icm-architect's `references/two-layer.md`.
 
-Run `kestrel` from the repo root, or pass `-C <repo>`. If it is not on PATH, run `pnpm link
---global` in the kestrel checkout, or `node <kestrel>/dist/cli.js`.
+Run `kestrel` from the repo root, or pass `-C <repo>`. If it is not on PATH, symlink
+`~/.local/bin/kestrel` to `<kestrel>/dist/cli.js`, or run `node <kestrel>/dist/cli.js`.
 
 ## The flow
 
