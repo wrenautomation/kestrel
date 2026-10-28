@@ -6,7 +6,7 @@ import type { Attrs } from "../graph.js";
 
 export type Drift = "add" | "change" | "inside";
 
-/** A box: a repo, a top folder, a package, a source folder or a file; the database, a schema or a table. */
+/** A box: a repo, a top folder, a package, a source folder or a file; the database, a schema or a table; the systems, a system or a part of one. */
 export interface TreeNode {
   id: string;
   label: string;
@@ -18,6 +18,8 @@ export interface TreeNode {
   files: number;
   /** Tables and views under the database or a schema. */
   tables?: number;
+  /** The box's second line when files or tables say nothing: a system's kind or part count. */
+  sub?: string;
   drift?: Drift;
   /** Approved nodes under it that the current map no longer has. */
   removed?: string[];
@@ -57,11 +59,34 @@ export interface Detail {
   services: Service[];
   /** A table's indexes: name, `index`, its CREATE statement. */
   indexes: Item[];
+  /** A system's or part's own relations, each with the code on both ends. */
+  seams: Seam[];
+  /** The code a system or part names as its own. */
+  code?: Path[];
   /** Exports with no declared type, for a package or folder: the count only. */
   inferred: number;
   exportCount: number;
   /** The cards that cover it, entity card first. */
   cards: CardRef[];
+}
+
+/** One relation of the systems model, seen from one end. */
+export interface Seam {
+  /** The box at the other end. */
+  id: string;
+  /** True: this box calls the other. */
+  out: boolean;
+  kind: string;
+  titles: string[];
+  /** Code at the source end, and at the target end. */
+  here: Path[];
+  there: Path[];
+}
+
+/** A code path the model names; `box` when it is a file the map has. */
+export interface Path {
+  path: string;
+  box?: string;
 }
 
 export interface Link {

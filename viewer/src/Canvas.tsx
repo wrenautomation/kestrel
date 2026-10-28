@@ -55,9 +55,11 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
       <span className="sub">
         {n.tables !== undefined
           ? `${n.tables} table${n.tables === 1 ? "" : "s"}`
-          : n.kids.length
-            ? `${n.files} file${n.files === 1 ? "" : "s"}`
-            : n.role}
+          : n.sub
+            ? n.sub
+            : n.kids.length
+              ? `${n.files} file${n.files === 1 ? "" : "s"}`
+              : n.role}
         {box.fanIn ? ` · ${box.fanIn} in` : ""}
       </span>
       {n.badge && (

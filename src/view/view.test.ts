@@ -184,4 +184,58 @@ describe("buildView", () => {
     ]);
     expect(v.counts.tables).toBe(3);
   });
+
+  it("folds the systems into parts, relations lifted, seams with their code on both ends", async () => {
+    const sys = (id: string, extra: Partial<Node> = {}): Node => ({
+      id: `system:${id}`,
+      role: extra.parent ? "part" : "system",
+      group: id.split(".")[0] as string,
+      attrs: { kind: "app", title: id },
+      ...extra,
+    });
+    const systems: Graph = {
+      layer: "systems",
+      nodes: [
+        sys("app"),
+        sys("app.api", {
+          parent: "system:app",
+          attrs: { kind: "app", title: "API", code: ["packages/a"] },
+        }),
+        sys("app.db", { parent: "system:app" }),
+        sys("site"),
+      ],
+      edges: [
+        { from: "system:app.api", to: "system:app.db", kind: "calls" },
+        {
+          from: "system:app.api",
+          to: "system:site",
+          kind: "calls",
+          attrs: { title: ["clicks"], here: ["packages/a/src/x.ts"], there: ["../site/x.ts"] },
+        },
+      ],
+    };
+    const v = await buildView({
+      root: "/r",
+      current: { imports: imports(), api, systems },
+      approved: { imports: null, api: null, systems: null },
+    });
+    expect(v.nodes["repo:r"]?.kids).toEqual(["dir:apps", "dir:packages", "sys:"]);
+    expect(v.nodes["sys:"]?.kids).toEqual(["system:app", "system:site"]);
+    expect(v.nodes["system:app"]?.sub).toBe("2 parts");
+    const at = (lvl: string) => v.levels[lvl]?.edges.map((e) => [e.from, e.to]) ?? [];
+    expect(at("system:app")).toEqual([["system:app.api", "system:app.db"]]);
+    expect(at("sys:")).toEqual([["system:app", "system:site"]]);
+    expect(v.details["system:app.api"]?.code).toEqual([{ path: "packages/a", box: "@s/a" }]);
+    expect(v.details["system:site"]?.seams).toEqual([
+      {
+        id: "system:app.api",
+        out: false,
+        kind: "calls",
+        titles: ["clicks"],
+        here: [{ path: "packages/a/src/x.ts", box: "@s/a/src/x.ts" }],
+        there: [{ path: "../site/x.ts" }],
+      },
+    ]);
+    expect(v.counts.systems).toBe(2);
+  });
 });

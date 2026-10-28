@@ -6,6 +6,7 @@ import { Config } from "../config.js";
 import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
+import { seams, systems } from "./systems.js";
 
 const FILES: Record<string, string> = {
   "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "NodeNext" } }),
@@ -147,4 +148,48 @@ describe("schema", () => {
     const pages = schema.render({ ...g, nodes: g.nodes.filter((n) => n.group === "public") });
     expect(pages["public.md"]).toContain("- public.clients (client_id → id; owner_id → id)");
   });
+});
+
+describe("systems", () => {
+  it("reads a LikeC4 workspace into systems, services and calls, and finds gone code paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kestrel-c4-"));
+    await mkdir(join(root, "map/system"), { recursive: true });
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src/send.ts"), "");
+    await writeFile(
+      join(root, "map/system/model.c4"),
+      `specification { element system  element service }
+model {
+  app = system 'App' {
+    description 'Sends mail'
+    worker = service 'Worker' { technology 'Lambda' }
+  }
+  mail = system 'Mail'
+  app.worker -> mail 'send' { metadata { here 'src/send.ts'
+    there '../mail/src/gone.ts' } }
+  app.worker -> mail 'bounce'
+}`,
+    );
+    const g = await systems.extract({
+      root,
+      config: Config.parse({ layers: { systems: {} } }),
+      env: {},
+    });
+    expect(g.nodes.map((n) => [n.id, n.role, n.parent ?? null])).toEqual([
+      ["system:app", "system", null],
+      ["system:mail", "system", null],
+      ["system:app.worker", "part", "system:app"],
+    ]);
+    expect(g.nodes[0]?.attrs).toMatchObject({ title: "App", description: "Sends mail" });
+    expect(g.edges).toEqual([
+      {
+        from: "system:app.worker",
+        to: "system:mail",
+        kind: "calls",
+        attrs: { title: ["send", "bounce"], here: ["src/send.ts"], there: ["../mail/src/gone.ts"] },
+      },
+    ]);
+    expect(await seams(root, g)).toEqual(["system:app.worker → system:mail: ../mail/src/gone.ts"]);
+    await rm(root, { recursive: true });
+  }, 30_000);
 });

@@ -44,8 +44,8 @@ const Schema = z.object({
 });
 
 const Systems = z.object({
-  /** LikeC4 model files. */
-  model: z.array(z.string()).default(["map/system/*.c4"]),
+  /** The LikeC4 workspace: every `.c4` file under it. */
+  dir: z.string().default("map/system"),
 });
 
 const Cards = z.object({

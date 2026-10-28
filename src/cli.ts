@@ -24,6 +24,7 @@ import { type Config, LAYER_IDS, type LayerId, loadConfig } from "./config.js";
 import { diff, formatChanges } from "./diff.js";
 import { byGroup } from "./graph.js";
 import { LAYERS } from "./layers/index.js";
+import { seams } from "./layers/systems.js";
 import { fileStore } from "./store.js";
 import { buildView } from "./view/build.js";
 import { serve } from "./view/serve.js";
@@ -80,6 +81,15 @@ export async function check(opts: RunOptions): Promise<number> {
     code = 1;
   }
   if (code) console.error("\nReview the changes. If they are right: kestrel approve, then commit.");
+  const model = config.layers.systems && (await store.read("systems", "current"));
+  const gone = model ? await seams(opts.root, model) : [];
+  if (gone.length) {
+    console.error(
+      `\nsystems: ${gone.length} code paths the model names are gone\n  ${gone.join("\n  ")}`,
+    );
+    console.error(`Fix the paths in ${config.layers.systems?.dir}.`);
+    code = 1;
+  }
   if (config.cards) {
     const cards = await readCards(opts.root, config.cards.dir);
     const ix = indexOf(await approvedGraphs(store));

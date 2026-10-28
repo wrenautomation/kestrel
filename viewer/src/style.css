@@ -15,6 +15,7 @@
   --l2: #c0567f;
   --l3: #3d78b8;
   --l4: #a8741c;
+  --l5: #5f7d2a;
   --hair: color-mix(in srgb, var(--ink) 11%, transparent);
   --fill: color-mix(in srgb, var(--ink) 5%, transparent);
   --tint: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -44,6 +45,7 @@
     --l2: #e588ac;
     --l3: #7fb0e6;
     --l4: #e0b05a;
+    --l5: #a8c66a;
     --edge: #7a69ad;
     --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
     color-scheme: dark;
@@ -65,6 +67,7 @@
   --l2: #e588ac;
   --l3: #7fb0e6;
   --l4: #e0b05a;
+  --l5: #a8c66a;
   --edge: #7a69ad;
   --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
   color-scheme: dark;
@@ -336,6 +339,11 @@ code {
 .role-table {
   --c: var(--l4);
 }
+.role-systems,
+.role-system,
+.role-part {
+  --c: var(--l5);
+}
 
 .line {
   stroke: var(--edge);
@@ -527,6 +535,65 @@ dl.facts dd {
 .card p {
   margin: 0;
   font-size: 13.5px;
+}
+.about {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.rels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+}
+.rels li {
+  padding: 6px 8px;
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+}
+.rels li:nth-child(odd) {
+  background: var(--wash);
+}
+.rels p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.rels button,
+.ends button {
+  text-align: left;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.rels button:hover,
+.ends button:hover {
+  text-decoration: underline;
+}
+.ends {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+.paths {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  font-size: 12px;
+}
+.paths button,
+.paths code {
+  overflow-wrap: anywhere;
+}
+.paths button {
+  text-align: left;
+  color: var(--accent);
+}
+.paths button:hover {
+  text-decoration: underline;
 }
 
 /* Search and note: one panel over the map. */

@@ -1,6 +1,6 @@
 /**
  * Every layer's graph → one tree to zoom (repo → top folder → package → source folder → file,
- * and repo → database → schema → table), each level laid out once with ELK. Exports and routes are not boxes: they sit in their file's
+ * repo → database → schema → table, and repo → systems → system → part), each level laid out once with ELK. Exports and routes are not boxes: they sit in their file's
  * detail, so a level stays a readable dependency graph.
  */
 import { createHash } from "node:crypto";
@@ -17,6 +17,7 @@ import type {
   Level,
   LevelEdge,
   Link,
+  Path,
   Service,
   TreeNode,
   ViewData,
@@ -48,6 +49,7 @@ const emptyDetail = (): Detail => ({
   exports: [],
   services: [],
   indexes: [],
+  seams: [],
   inferred: 0,
   exportCount: 0,
   cards: [],
@@ -170,6 +172,54 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         });
   }
 
+  // The systems: a box per system and per part in it; each relation is a seam in its ends' detail.
+  const sys = input.current.systems;
+  const SYS = "sys:";
+  if (sys?.nodes.length) {
+    add({ id: SYS, label: "systems", role: "systems", parent: repo, kids: [], files: 0 });
+    // Parents first: LikeC4 ids nest by dots, so a shorter id is never a child of a longer one.
+    for (const n of [...sys.nodes].sort(
+      (a, b) => a.id.split(".").length - b.id.split(".").length,
+    )) {
+      add({
+        id: n.id,
+        label: String(n.attrs?.title ?? n.id.slice("system:".length)),
+        role: n.role,
+        parent: n.parent ?? SYS,
+        kids: [],
+        files: 0,
+        sub: String(n.attrs?.kind ?? n.role),
+      });
+      detail(n.id).attrs = n.attrs ?? {};
+    }
+    const many = (k: number, what: string) => `${k} ${what}${k === 1 ? "" : "s"}`;
+    (nodes[SYS] as TreeNode).sub = many(nodes[SYS]?.kids.length ?? 0, "system");
+    for (const n of sys.nodes) {
+      const b = nodes[n.id] as TreeNode;
+      if (b.kids.length) b.sub = many(b.kids.length, "part");
+    }
+    const paths = (v: unknown): Path[] =>
+      (Array.isArray(v) ? (v as string[]) : []).map((path) => {
+        // A box the map has already: a package by its dir, or a file. Never a new one.
+        const pkg = dirs.find(([, d]) => d === `${path.replace(/\/$/, "")}/`)?.[0];
+        const hit = dirs.find(([, d]) => d && path.startsWith(d));
+        const file = hit && `${hit[0]}/${path.slice(hit[1].length)}`;
+        const box = pkg ?? (file && nodes[file] ? file : undefined);
+        return box ? { path, box } : { path };
+      });
+    for (const n of sys.nodes) {
+      const code = paths(n.attrs?.code);
+      if (code.length) detail(n.id).code = code;
+    }
+    for (const e of sys.edges) {
+      const titles = Array.isArray(e.attrs?.title) ? (e.attrs.title as string[]) : [];
+      const [here, there] = [paths(e.attrs?.here), paths(e.attrs?.there)];
+      const s = { kind: e.kind, titles, here, there };
+      detail(e.from).seams.push({ ...s, id: e.to, out: true });
+      detail(e.to).seams.push({ ...s, id: e.from, out: false });
+    }
+  }
+
   // Exports and services into their file's detail.
   const index: ViewData["index"] = [];
   const itemDrift = new Map<string, Drift>();
@@ -269,9 +319,9 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
   };
   const leaf = (id: string) => {
     const r = nodes[id]?.role;
-    return r === "file" || r === "table";
+    return r === "file" || r === "table" || r === "system" || r === "part";
   };
-  for (const e of [...(imports?.edges ?? []), ...(schema?.edges ?? [])]) {
+  for (const e of [...(imports?.edges ?? []), ...(schema?.edges ?? []), ...(sys?.edges ?? [])]) {
     if (!leaf(e.from) || !leaf(e.to)) continue;
     const a = chains.get(e.from) ?? [];
     const b = chains.get(e.to) ?? [];
@@ -358,6 +408,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         if (layer === "imports") return nearest(n.id);
         if (layer === "schema")
           return n.role === "index" ? n.parent : n.role === "migration" ? DB : n.id;
+        if (layer === "systems") return n.id;
         if (n.role === "route") return n.parent ? services.get(n.parent)?.box : undefined;
         return n.attrs?.file ? boxOfPath(String(n.attrs.file)) : undefined;
       };
@@ -532,6 +583,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     services: services.size,
     routes: routes?.nodes.filter((n) => n.role === "route").length ?? 0,
     tables: tables.length,
+    systems: sys?.nodes.filter((n) => n.role === "system").length ?? 0,
     drift: Object.values(nodes).filter((n) => n.drift && n.drift !== "inside").length,
   };
   return {

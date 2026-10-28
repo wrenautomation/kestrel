@@ -13,6 +13,7 @@ export type Attrs = Readonly<Record<string, Attr>>;
 export const ROLES = [
   "repo",
   "system",
+  "part",
   "service",
   "route",
   "package",

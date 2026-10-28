@@ -1,5 +1,13 @@
 import { useEffect, useRef } from "react";
-import type { Detail as DetailData, Item, Link, Service, ViewData } from "../../src/view/types";
+import type {
+  Detail as DetailData,
+  Item,
+  Link,
+  Path,
+  Seam,
+  Service,
+  ViewData,
+} from "../../src/view/types";
 
 interface Props {
   data: ViewData;
@@ -14,6 +22,13 @@ const DRIFT = {
   add: "new since approve",
   change: "changed since approve",
   inside: "changes inside",
+};
+
+/** A system box by name; a part reads with its system: `wren / Lambda worker`. */
+const sysName = (data: ViewData, id: string) => {
+  const n = data.nodes[id];
+  const up = n?.role === "part" && n.parent ? data.nodes[n.parent] : undefined;
+  return up ? `${up.label} / ${n?.label}` : (n?.label ?? id);
 };
 
 /** The package part of a file id: `@scope/name` or `name`. */
@@ -46,11 +61,13 @@ function Links({
             <button type="button" onClick={() => onGo(l.id)}>
               {data.nodes[l.id]?.role === "table"
                 ? l.id.slice("table:".length)
-                : data.nodes[l.id]?.role !== "file"
-                  ? l.id
-                  : pkgPart(l.id) === own
-                    ? l.id.slice((own?.length ?? -1) + 1)
-                    : l.id.replace(/^@[^/]+\//, "")}
+                : data.nodes[l.id]?.role === "system" || data.nodes[l.id]?.role === "part"
+                  ? sysName(data, l.id)
+                  : data.nodes[l.id]?.role !== "file"
+                    ? l.id
+                    : pkgPart(l.id) === own
+                      ? l.id.slice((own?.length ?? -1) + 1)
+                      : l.id.replace(/^@[^/]+\//, "")}
             </button>
             <span className="meta">
               {l.n}
@@ -129,6 +146,62 @@ function Services({
   );
 }
 
+/** Code paths: a button when the map has the box, plain text when it is outside the repo. */
+function Paths({ list, onGo }: { list: Path[]; onGo: Props["onGo"] }) {
+  return (
+    <div className="paths">
+      {list.map((p) =>
+        p.box ? (
+          <button type="button" key={p.path} onClick={() => onGo(p.box as string)}>
+            <code>{p.path}</code>
+          </button>
+        ) : (
+          <code key={p.path}>{p.path}</code>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** A system's own relations (not those of its parts), out then in, each with what it is for and the code at both ends. */
+function Seams({ list, data, onGo }: { list: Seam[]; data: ViewData; onGo: Props["onGo"] }) {
+  if (!list.length) return null;
+  const sorted = [...list].sort((a, b) => Number(b.out) - Number(a.out));
+  return (
+    <section>
+      <h3>
+        Relations <span className="n">{list.length}</span>
+      </h3>
+      <ul className="rels">
+        {sorted.map((s) => (
+          <li key={`${s.out}${s.kind}${s.id}`}>
+            <div className="name">
+              <span className="meta">{s.out ? "to" : "from"}</span>{" "}
+              <button type="button" onClick={() => onGo(s.id)}>
+                {sysName(data, s.id)}
+              </button>{" "}
+              <span className="meta">{s.kind}</span>
+            </div>
+            {s.titles.length > 0 && <p>{s.titles.join("; ")}</p>}
+            {s.here.length > 0 && (
+              <div className="ends">
+                <span className="meta">{s.out ? "here" : "there"}</span>
+                <Paths list={s.here} onGo={onGo} />
+              </div>
+            )}
+            {s.there.length > 0 && (
+              <div className="ends">
+                <span className="meta">{s.out ? "there" : "here"}</span>
+                <Paths list={s.there} onGo={onGo} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** A table's columns, keys and indexes, as Postgres has them. */
 function Table({
   attrs,
@@ -194,6 +267,7 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
   }, [id, mark]);
   if (!n) return <aside className="detail" />;
   const npm = d?.attrs?.npm;
+  const sys = n.role === "system" || n.role === "part" || n.role === "systems";
   return (
     <aside className="detail" ref={ref}>
       <header>
@@ -210,12 +284,19 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
             <dd>{n.tables}</dd>
           </>
         ) : (
-          n.kids.length > 0 && (
+          n.kids.length > 0 &&
+          !sys && (
             <>
               <dt>Files</dt>
               <dd>{n.files}</dd>
             </>
           )
+        )}
+        {typeof d?.attrs?.technology === "string" && (
+          <>
+            <dt>Runs on</dt>
+            <dd>{d.attrs.technology}</dd>
+          </>
         )}
         {n.role === "db" && (
           <>
@@ -242,6 +323,13 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
           </>
         )}
       </dl>
+      {typeof d?.attrs?.description === "string" && <p className="about">{d.attrs.description}</p>}
+      {d?.code?.length ? (
+        <section>
+          <h3>Code</h3>
+          <Paths list={d.code} onGo={onGo} />
+        </section>
+      ) : null}
       {n.kids.length > 0 && (
         <button type="button" className="open" onClick={() => onOpen(n.id)}>
           Open <kbd>Enter</kbd>
@@ -273,20 +361,26 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
       ))}
       {d && (
         <>
-          <Links
-            title={n.role === "table" ? "References" : "Uses"}
-            list={d.uses}
-            data={data}
-            from={n.id}
-            onGo={onGo}
-          />
-          <Links
-            title={n.role === "table" ? "Referenced by" : "Used by"}
-            list={d.usedBy}
-            data={data}
-            from={n.id}
-            onGo={onGo}
-          />
+          {/* A leaf part's calls are its relations: list them once, with their code. */}
+          {!(sys && !n.kids.length) && (
+            <>
+              <Links
+                title={n.role === "table" ? "References" : sys ? "Calls" : "Uses"}
+                list={d.uses}
+                data={data}
+                from={n.id}
+                onGo={onGo}
+              />
+              <Links
+                title={n.role === "table" ? "Referenced by" : sys ? "Called by" : "Used by"}
+                list={d.usedBy}
+                data={data}
+                from={n.id}
+                onGo={onGo}
+              />
+            </>
+          )}
+          <Seams list={d.seams} data={data} onGo={onGo} />
           {n.role === "table" && <Table attrs={d.attrs} indexes={d.indexes} mark={mark} />}
           {Array.isArray(npm) && npm.length > 0 && (
             <section>
