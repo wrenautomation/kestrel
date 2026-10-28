@@ -194,17 +194,16 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
           </ul>
         </section>
       ) : null}
-      {d?.card && (
-        <section className="card">
+      {d?.cards.map((c) => (
+        <section className="card" key={c.path}>
           <h3>
-            Why <span className="meta">{d.card.path}</span>
+            {c.type === "object" || c.type === "process" ? "Why" : c.type}{" "}
+            <span className="meta">{c.path}</span>
           </h3>
-          <p>{d.card.why}</p>
-          {d.card.stale && (
-            <p className="tag warn">stale: the code changed since the card was read</p>
-          )}
+          <p>{c.why}</p>
+          {c.stale && <p className="tag warn">stale: the code changed since the card was read</p>}
         </section>
-      )}
+      ))}
       {d && (
         <>
           <Links title="Uses" list={d.uses} data={data} from={n.id} onGo={onGo} />

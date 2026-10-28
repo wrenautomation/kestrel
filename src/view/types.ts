@@ -19,7 +19,7 @@ export interface TreeNode {
   drift?: Drift;
   /** Approved nodes under it that the current map no longer has. */
   removed?: string[];
-  /** Card issues on it (step 5): `none` = no card where one is required, `stale`. */
+  /** `none`: a required role with no card on it or under it. `stale`: a card on it is stale. */
   badge?: "none" | "stale";
 }
 
@@ -56,8 +56,8 @@ export interface Detail {
   /** Exports with no declared type, for a package or folder: the count only. */
   inferred: number;
   exportCount: number;
-  /** The card that covers it (step 5). */
-  card?: { path: string; kind: string; why: string; stale: boolean };
+  /** The cards that cover it, entity card first. */
+  cards: CardRef[];
 }
 
 export interface Link {
@@ -117,4 +117,16 @@ export interface ViewData {
   /** Every export and route, for search: name → the file box that shows it. */
   index: { name: string; kind: string; box: string }[];
   counts: Record<string, number>;
+}
+
+/** A card as the view shows it: `covers` are current node ids. */
+export interface CardRef {
+  path: string;
+  type: string;
+  why: string;
+  stale: boolean;
+}
+
+export interface CardView extends CardRef {
+  covers: string[];
 }

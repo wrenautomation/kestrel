@@ -122,4 +122,22 @@ describe("buildView", () => {
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
     expect(Object.keys(cache).sort()).toEqual(keys);
   });
+
+  it("puts a card on each box it covers, and badges a package with none", async () => {
+    const v = await buildView({
+      root: "/r",
+      current: { imports: imports(), api },
+      approved: { imports: null, api: null },
+      cards: [
+        { path: "map/x.md", type: "object", why: "Because.", stale: true, covers: ["@s/a#run"] },
+      ],
+      require: ["package"],
+    });
+    expect(v.details["@s/a/src/x.ts"]?.cards).toEqual([
+      { path: "map/x.md", type: "object", why: "Because.", stale: true },
+    ]);
+    expect(v.nodes["@s/a/src/x.ts"]?.badge).toBe("stale");
+    expect(v.nodes["@s/a"]?.badge).toBeUndefined();
+    expect(v.nodes["@s/b"]?.badge).toBe("none");
+  });
 });

@@ -11,7 +11,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { readCards, restamp } from "./cards.js";
+import {
+  checkCards,
+  coveredBy,
+  formatIssues,
+  indexOf,
+  readCards,
+  restamp,
+  stampOf,
+} from "./cards.js";
 import { type Config, LAYER_IDS, type LayerId, loadConfig } from "./config.js";
 import { diff, formatChanges } from "./diff.js";
 import { byGroup } from "./graph.js";
@@ -72,6 +80,16 @@ export async function check(opts: RunOptions): Promise<number> {
     code = 1;
   }
   if (code) console.error("\nReview the changes. If they are right: kestrel approve, then commit.");
+  if (config.cards) {
+    const cards = await readCards(opts.root, config.cards.dir);
+    const ix = indexOf(await approvedGraphs(store));
+    const issues = await checkCards(opts.root, cards, ix, config.cards.require);
+    if (issues.length) {
+      console.error(`\ncards: ${issues.length} issues\n${formatIssues(issues)}`);
+      console.error("Read each stale card against the map, fix it, then: kestrel stamp <card>.");
+      code = 1;
+    }
+  }
   return code;
 }
 
@@ -84,14 +102,20 @@ export async function approve(opts: RunOptions): Promise<void> {
   }
 }
 
+const approvedGraphs = async (store: ReturnType<typeof fileStore>) =>
+  (await Promise.all(LAYER_IDS.map((id) => store.read(id, "approved")))).filter((g) => g !== null);
+
 export async function stamp(root: string, cards: string[], file?: string): Promise<void> {
   const config = await loadConfig(root, file);
   const all = await readCards(root, config.cards?.dir ?? "map");
-  const store = fileStore(root, config.out);
-  const approved = await Promise.all(LAYER_IDS.map((id) => store.read(id, "approved")));
-  const graphs = approved.filter((g) => g !== null);
-  for (const c of all.filter((c) => cards.some((p) => resolve(root, p) === resolve(root, c.path))))
-    await restamp(root, c, graphs);
+  const ix = indexOf(await approvedGraphs(fileStore(root, config.out)));
+  const asked = cards.map((p) => resolve(root, p));
+  const found = all.filter((c) => asked.includes(resolve(root, c.path)));
+  if (found.length < asked.length) throw new Error("a path given is not a card (no frontmatter)");
+  for (const c of found) {
+    await restamp(root, c, ix);
+    console.log(`${c.path}: stamp ${stampOf(c, ix)}, covers ${coveredBy(c, ix).length} nodes`);
+  }
 }
 
 /** The view's data from what is on disk: run `gen` first. */
@@ -111,7 +135,23 @@ export async function viewData(root: string, configFile?: string) {
   const cache: LayoutCache = await readFile(file, "utf8")
     .then((t) => JSON.parse(t) as LayoutCache)
     .catch(() => ({}));
-  const view = await buildView({ root, current, approved, cache });
+  const cards = config.cards ? await readCards(root, config.cards.dir) : [];
+  const was = indexOf(Object.values(approved).filter((g) => g !== null));
+  const now = indexOf(Object.values(current).filter((g) => g !== null));
+  const view = await buildView({
+    root,
+    current,
+    approved,
+    cache,
+    cards: cards.map((c) => ({
+      path: c.path,
+      type: c.type ?? "card",
+      why: c.why,
+      stale: Boolean(c.stamp && c.stamp !== stampOf(c, was)),
+      covers: coveredBy(c, now),
+    })),
+    require: config.cards?.require ?? [],
+  });
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(cache));
   return view;

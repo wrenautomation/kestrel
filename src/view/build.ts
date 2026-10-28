@@ -10,6 +10,7 @@ import type { ELK as Elk, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api.js"
 import { diff } from "../diff.js";
 import { type Edge, edgeId, type Graph, type Node } from "../graph.js";
 import type {
+  CardView,
   Detail,
   Drift,
   LayoutCache,
@@ -30,6 +31,9 @@ export interface ViewInput {
   approved: Record<string, Graph | null>;
   /** Read and filled in place: layouts by input hash. Entries no level used are dropped. */
   cache?: LayoutCache;
+  cards?: CardView[];
+  /** Node roles that need a card (`kestrel.json` cards.require). */
+  require?: readonly string[];
 }
 
 /** Bump when `place` changes: the cache key is its input, not its code. */
@@ -45,6 +49,7 @@ const emptyDetail = (): Detail => ({
   services: [],
   inferred: 0,
   exportCount: 0,
+  cards: [],
 });
 
 export async function buildView(input: ViewInput): Promise<ViewData> {
@@ -335,6 +340,23 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
           if (u && up !== n.id && !u.drift) u.drift = "inside";
         }
   }
+
+  // Cards: each on the boxes it covers (an export's card on its file), a badge where one is due.
+  const boxOf = new Map<string, string>();
+  for (const [box, d] of Object.entries(details)) for (const e of d.exports) boxOf.set(e.id, box);
+  const held = new Set<string>();
+  for (const c of input.cards ?? []) {
+    const ref = { path: c.path, type: c.type, why: c.why, stale: c.stale };
+    const boxes = new Set(c.covers.map((id) => (nodes[id] ? id : boxOf.get(id))).filter(Boolean));
+    for (const b of boxes as Set<string>) {
+      detail(b).cards.push(ref);
+      if (c.stale) (nodes[b] as TreeNode).badge = "stale";
+      for (const up of chains.get(b) ?? []) held.add(up);
+    }
+  }
+  if (input.cards)
+    for (const n of Object.values(nodes))
+      if (!n.badge && input.require?.includes(n.role) && !held.has(n.id)) n.badge = "none";
 
   // Lay out every container's kids once.
   const elk = new ELK();
