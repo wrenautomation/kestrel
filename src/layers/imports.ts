@@ -162,11 +162,34 @@ function page(g: Graph): Record<string, string> {
   if (Array.isArray(npm) && npm.length)
     lines.push("## Outside packages", "", [...npm].sort().join(", "), "");
   if (files.length) {
-    lines.push("## Files", "", "```mermaid", "flowchart LR");
-    for (const f of files) lines.push(`  ${mid(f.id)}["${short(f.id)}"]`);
-    for (const e of inner)
-      lines.push(`  ${mid(e.from)} ${e.attrs?.type ? "-.->" : "-->"} ${mid(e.to)}`);
-    lines.push("```", "");
+    // One node per top folder: a diagram of every file is too big to render past ~200 files.
+    const folder = (id: string) => {
+      const parts = short(id)
+        .replace(/^src\//, "")
+        .split("/");
+      return parts.length > 1 ? `${parts[0]}/` : (parts[0] ?? "");
+    };
+    const links = new Map<string, boolean>(); // `from\0to` → every import is type-only
+    for (const e of inner) {
+      const [a, b] = [folder(e.from), folder(e.to)];
+      if (a === b) continue;
+      const k = `${a}\0${b}`;
+      links.set(k, (links.get(k) ?? true) && e.attrs?.type === true);
+    }
+    const byFolder = new Map<string, string[]>();
+    for (const f of files)
+      byFolder.set(folder(f.id), [...(byFolder.get(folder(f.id)) ?? []), short(f.id)]);
+    lines.push("## Folders", "", "Dotted: types only.", "", "```mermaid", "flowchart LR");
+    for (const [f, list] of byFolder)
+      lines.push(`  ${mid(f)}["${f}${list.length > 1 ? ` (${list.length})` : ""}"]`);
+    for (const [k, type] of links) {
+      const [a, b] = k.split("\0") as [string, string];
+      lines.push(`  ${mid(a)} ${type ? "-.->" : "-->"} ${mid(b)}`);
+    }
+    lines.push("```", "", "## Files", "");
+    for (const [f, list] of [...byFolder].sort(([a], [b]) => (a < b ? -1 : 1)))
+      lines.push(`- ${f}${f.endsWith("/") ? `: ${list.sort().join(", ")}` : ""}`);
+    lines.push("");
   }
   return { [name]: lines.join("\n") };
 }
