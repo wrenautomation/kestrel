@@ -13,6 +13,8 @@ import {
   useStore,
 } from "@xyflow/react";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import rough from "roughjs";
+import type { Drawable, Options } from "roughjs/bin/core";
 import type { LevelBox, TreeNode, ViewData } from "../../src/view/types";
 
 type BoxData = { n: TreeNode; box: LevelBox; selected: boolean; near: boolean; dim: boolean };
@@ -30,17 +32,118 @@ const FAINT_OVER = 60;
 /** Fit never shrinks a level below this; the minimap shows the rest. */
 const FIT_MIN = 0.45;
 
+/**
+ * Role reads from the outline, as in a system design chart: a drum holds data, a pill is a
+ * service, a dashed box holds other boxes. Rough.js (Excalidraw's renderer) draws it, kept low
+ * so it reads formal. The seed comes from the id, so a box looks the same on every load.
+ */
+type Shape = "rect" | "zone" | "pill" | "drum";
+const SHAPE: Record<string, Shape> = {
+  repo: "zone",
+  dir: "zone",
+  folder: "zone",
+  systems: "zone",
+  service: "pill",
+  db: "drum",
+  schema: "drum",
+  table: "drum",
+};
+/** A LikeC4 kind on a system or part. */
+const KIND: Record<string, Shape> = { store: "drum" };
+const shapeOf = (n: TreeNode): Shape =>
+  SHAPE[n.role] ??
+  ((n.role === "part" || n.role === "system") && n.sub ? KIND[n.sub] : undefined) ??
+  "rect";
+const sketch = rough.generator();
+const seedOf = (id: string) => {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return (h >>> 0) % 2147483646 || 1;
+};
+/** Drum lid depth; the label moves down by it. */
+const lid = (h: number) => Math.min(8, h * 0.13);
+
+const Sketch = memo(function Sketch({
+  id,
+  shape,
+  w,
+  h,
+}: {
+  id: string;
+  shape: Shape;
+  w: number;
+  h: number;
+}) {
+  const paths = useMemo(() => {
+    const o: Options = {
+      seed: seedOf(id),
+      roughness: 0.55,
+      bowing: 0.5,
+      strokeWidth: 1.3,
+      fill: "fill",
+      fillStyle: "solid",
+      // toPaths drops strokeLineDash; CSS dashes the zone.
+      ...(shape === "zone" ? { disableMultiStroke: true } : {}),
+    };
+    const { fill: _, fillStyle: __, ...line } = o;
+    const m = 1.5;
+    const W = w - 2 * m;
+    const H = h - 2 * m;
+    const at = (d: string) => sketch.path(d, o);
+    let ds: Drawable[];
+    if (shape === "pill") {
+      const r = Math.min(H / 2, 18);
+      ds = [
+        at(
+          `M${m + r},${m} H${m + W - r} A${r},${r} 0 0 1 ${m + W},${m + r} V${m + H - r} A${r},${r} 0 0 1 ${m + W - r},${m + H} H${m + r} A${r},${r} 0 0 1 ${m},${m + H - r} V${m + r} A${r},${r} 0 0 1 ${m + r},${m} Z`,
+        ),
+      ];
+    } else if (shape === "drum") {
+      const rx = W / 2;
+      const ry = lid(H);
+      const top = m + ry;
+      const bot = m + H - ry;
+      ds = [
+        at(
+          `M${m},${top} V${bot} A${rx},${ry} 0 0 0 ${m + W},${bot} V${top} A${rx},${ry} 0 0 0 ${m},${top} Z`,
+        ),
+        sketch.path(`M${m},${top} A${rx},${ry} 0 0 0 ${m + W},${top}`, line),
+      ];
+    } else ds = [sketch.rectangle(m, m, W, H, o)];
+    return ds.flatMap((d) => sketch.toPaths(d));
+  }, [id, shape, w, h]);
+  return (
+    <svg className="sk" width={w} height={h} aria-hidden="true">
+      {paths.map((p, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed strokes of one shape
+        <path key={i} d={p.d} className={p.fill && p.fill !== "none" ? "f" : "s"} />
+      ))}
+    </svg>
+  );
+});
+
 const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
   const { n, box } = data;
+  const shape = shapeOf(n);
   const cls = [
     "box",
+    `shape-${shape}`,
     `role-${n.role}`,
     n.drift ? `drift-${n.drift}` : "",
     data.selected ? "sel" : "",
     data.dim ? "dim" : "",
   ].join(" ");
   return (
-    <div className={cls} style={{ width: box.w, height: box.h }} title={n.id}>
+    <div
+      className={cls}
+      style={{
+        width: box.w,
+        height: box.h,
+        ...(shape === "drum" ? { paddingTop: 2 * lid(box.h), paddingBottom: 2 } : {}),
+      }}
+      title={n.id}
+    >
+      <Sketch id={n.id} shape={shape} w={box.w} h={box.h} />
       <Handle type="target" position={Position.Left} className="h" />
       <span className="label">
         {/* Break after - . / only, never inside a word. */}

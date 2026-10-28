@@ -20,7 +20,6 @@
   --fill: color-mix(in srgb, var(--ink) 5%, transparent);
   --tint: color-mix(in srgb, var(--accent) 10%, transparent);
   --wash: color-mix(in srgb, var(--accent) 6%, transparent);
-  --edge: color-mix(in srgb, var(--accent) 72%, #000);
   --raise:
     0 0 0 1px var(--hair), 0 1px 2px rgb(14 14 14 / 0.04), 0 4px 14px -6px rgb(40 30 70 / 0.1);
   --body: "Figtree", system-ui, -apple-system, sans-serif;
@@ -46,7 +45,6 @@
     --l3: #7fb0e6;
     --l4: #e0b05a;
     --l5: #a8c66a;
-    --edge: #7a69ad;
     --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
     color-scheme: dark;
   }
@@ -68,7 +66,6 @@
   --l3: #7fb0e6;
   --l4: #e0b05a;
   --l5: #a8c66a;
-  --edge: #7a69ad;
   --raise: 0 0 0 1px var(--hair), 0 6px 18px -8px rgb(0 0 0 / 0.6);
   color-scheme: dark;
 }
@@ -220,7 +217,7 @@ code {
 }
 .react-flow {
   --xy-background-color: var(--canvas);
-  --xy-edge-stroke: var(--edge);
+  --xy-edge-stroke: var(--ink-2);
 }
 .react-flow__attribution {
   background: transparent;
@@ -230,31 +227,48 @@ code {
   color: var(--ink-3);
 }
 
-/* Boxes: color = role (left bar), size = fan-in (set by the layout), outline = drift. */
+/* Boxes: shape = role, tint = role, size = fan-in (set by the layout), stroke = drift. */
 .box {
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 6px 12px 6px 16px;
-  background: var(--paper);
-  border-radius: 10px;
-  box-shadow: var(--raise);
+  padding: 6px 14px;
+  --sk-line: color-mix(in srgb, var(--c, var(--ink-3)) 60%, var(--ink-2));
+  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 9%, var(--paper));
+  --sk-w: 1.15px;
   cursor: pointer;
-  transition:
-    opacity 0.18s var(--ease),
-    box-shadow 0.18s var(--ease);
+  transition: opacity 0.18s var(--ease);
 }
-.box::before {
-  content: "";
+.box > :not(.sk) {
+  position: relative;
+}
+.sk {
   position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  border-radius: 0 3px 3px 0;
-  background: var(--c, var(--ink-3));
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.sk .f {
+  fill: var(--sk-fill);
+  stroke: none;
+}
+.sk .s {
+  fill: none;
+  stroke: var(--sk-line);
+  stroke-width: var(--sk-w);
+  stroke-linecap: round;
+  transition: stroke 0.18s var(--ease);
+}
+.shape-zone {
+  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 4%, var(--paper));
+}
+.shape-zone .sk .s {
+  stroke-dasharray: 7 5;
+}
+.shape-pill {
+  padding-inline: 20px;
 }
 .box .label {
   font-weight: 650;
@@ -270,34 +284,25 @@ code {
 .far .box .sub {
   display: none;
 }
-.box.sel {
-  box-shadow:
-    0 0 0 2px var(--accent),
-    var(--raise);
-}
 .box.dim {
   opacity: 0.38;
 }
 .box.drift-change {
-  box-shadow:
-    0 0 0 2px var(--warn),
-    var(--raise);
+  --sk-line: var(--warn);
+  --sk-w: 2.2px;
 }
 .box.drift-add {
-  box-shadow:
-    0 0 0 2px var(--good),
-    var(--raise);
+  --sk-line: var(--good);
+  --sk-w: 2.2px;
 }
 .box.drift-inside {
   outline: 1.5px dashed var(--warn);
-  outline-offset: 3px;
+  outline-offset: 4px;
+  border-radius: 6px;
 }
-.box.sel.drift-change,
-.box.sel.drift-add {
-  box-shadow:
-    0 0 0 2px var(--accent),
-    0 0 0 5px color-mix(in srgb, var(--warn) 50%, transparent),
-    var(--raise);
+.box.sel {
+  --sk-line: var(--accent);
+  --sk-w: 2.6px;
 }
 .badge {
   position: absolute;
@@ -346,8 +351,8 @@ code {
 }
 
 .line {
-  stroke: var(--edge);
-  stroke-opacity: 0.55;
+  stroke: var(--ink-2);
+  stroke-opacity: 0.6;
   fill: none;
   transition: stroke-opacity 0.18s var(--ease);
 }
@@ -501,7 +506,7 @@ dl.facts dd {
 }
 .items li.drift-change,
 .items li.drift-add {
-  box-shadow: inset 3px 0 0 var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 .name {
   font-size: 13px;
