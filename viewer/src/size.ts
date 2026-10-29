@@ -59,13 +59,18 @@ export function boxSize(n: TreeNode, fanIn: number, top = 0): Size {
 /** An open container: its title and one-liner on top, its kids under. */
 export const ZONE: Pad = { top: 76, side: 22, bottom: 22 };
 
-/** The largest label font (px) that fits its box in up to 3 rows: zoomed-out labels grow to it, no further. */
-export function labelFit(n: TreeNode, w: number, h: number, top = 0): number {
+/** The largest label font (px) that fits its box in up to 3 rows: zoomed-out labels grow to it, no further.
+ * `far`: kicker and stats hidden, the box padding cut to FAR_PAD, so the label takes the whole box. */
+export function labelFit(n: TreeNode, w: number, h: number, top = 0, far = false): number {
   const at = width(n.label, LABEL.font);
-  const iw = (w - STACK - PAD.x) * 0.92;
-  const ih = h - STACK - PAD.y - top;
+  const pad = far ? { x: 2 * FAR_PAD.x, y: 2 * FAR_PAD.y } : PAD;
+  const iw = (w - STACK - pad.x) * 0.92;
+  const ih = h - STACK - pad.y - top;
   let best = 0;
   for (let r = 1; r <= 3; r++)
     best = Math.max(best, Math.min((13.5 * r * iw) / at, ih / (r * 1.25)));
   return Math.round(Math.max(13.5, best) * 10) / 10;
 }
+
+/** A closed box's padding when far (style.css `.far .box:not(.zoned)`). */
+export const FAR_PAD = { x: 8, y: 7.5 };

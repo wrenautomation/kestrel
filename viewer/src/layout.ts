@@ -49,6 +49,8 @@ const OPTIONS = {
   "elk.spacing.componentComponent": "40",
   "elk.aspectRatio": "1.8",
   "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+  // Lines into one box share its port: a hub reads as one trunk, not a comb.
+  "elk.layered.mergeEdges": "true",
 };
 // elk-api runs ELK in its own web worker: the page never blocks on a layout.
 let elkApi: ELK | undefined;
@@ -105,7 +107,17 @@ const engineOf =
       const rank = new Map(lvl.boxes.map((b, i) => [b.id, i]));
       return grid([...kids].sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)));
     }
-    return elk(kids, lvl.edges);
+    // Implied lines get no route: the layout packs by the skeleton only.
+    const keep = lvl.edges.flatMap((e, i) => (e.implied ? [] : [i]));
+    const laid = await elk(
+      kids,
+      keep.map((i) => lvl.edges[i] as Level["edges"][number]),
+    );
+    const routes: Routes = lvl.edges.map(() => []);
+    keep.forEach((i, j) => {
+      routes[i] = laid.extra?.[j] ?? [];
+    });
+    return { ...laid, extra: routes };
   };
 
 const caches = new WeakMap<ViewData, NestCache<Routes>>();

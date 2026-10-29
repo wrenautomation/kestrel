@@ -244,6 +244,11 @@ code {
   cursor: pointer;
   transition: opacity 0.18s var(--ease);
 }
+/* Right and below: + STACK (size.ts) for the stacked sheets. */
+.box:not(.zoned) {
+  padding-right: 19px;
+  padding-bottom: 15px;
+}
 .box:not(.zoned) .sk {
   filter: drop-shadow(0 1px 1px rgb(14 14 14 / 0.05)) drop-shadow(0 6px 10px rgb(40 30 70 / 0.06));
   transition:
@@ -406,6 +411,14 @@ code {
   /* About 11px on screen at any zoom out; the box's own size from 1x up. */
   font-size: min(clamp(13.5px, calc(11px / var(--z, 1)), 28px), var(--fit, 28px));
   line-height: 1.25;
+}
+/* Far: the label alone fills the box (size.ts FAR_PAD), at about 11px on screen. */
+.far .box:not(.zoned) {
+  padding-inline: 8px 13px;
+  padding-bottom: 10px;
+}
+.far .box:not(.zoned) .label {
+  font-size: min(max(13.5px, calc(11px / var(--z, 1))), var(--fit-far, 28px));
 }
 /* A zone's title stays readable when the whole map fits: up to the header's height. */
 .box.zoned .label {

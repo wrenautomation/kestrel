@@ -8,6 +8,7 @@ import { basename } from "node:path";
 import type { Cost } from "../cost.js";
 import { diff } from "../diff.js";
 import { type Edge, edgeId, type Graph, type Node } from "../graph.js";
+import { implied } from "./reduce.js";
 import type {
   CardView,
   Detail,
@@ -579,6 +580,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
       const [from, to] = k.split("\0") as [string, string];
       return { from, to, n: a.n, type: a.type };
     });
+    for (const i of implied(edges)) (edges[i] as LevelEdge).implied = true;
     // No lines: a layered layout packs the boxes by size and loses their order; a grid keeps it.
     const grid = c.kids.length > GRID_OVER || !edges.length;
     const ids = grid

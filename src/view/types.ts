@@ -128,6 +128,8 @@ export interface LevelEdge {
   n: number;
   /** Every one is type-only. */
   type: boolean;
+  /** Another path joins the two (reduce.ts): left out of the layout, drawn only when selected. */
+  implied?: true;
 }
 
 /** A container's kids, in draw order, and the lines between them. No positions: the page lays out. */

@@ -42,7 +42,7 @@ type LineData = {
 };
 
 /** Past this many lines a level reads as a hairball: draw them faint until a box is picked. */
-const FAINT_OVER = 24;
+const FAINT_OVER = 60;
 /** Fit never shrinks the map below this; the minimap shows the rest. */
 const FIT_MIN = 0.45;
 
@@ -210,11 +210,13 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
         width: w,
         height: h,
         ...(open ? { paddingTop: 10, height: h, justifyContent: "flex-start" } : {}),
-        ...(open ? {} : { paddingRight: 14 + STACK, paddingBottom: 10 + STACK }),
         ...(shape === "drum" ? { paddingTop: 2 * lid(h) + 4 } : {}),
         ...(open
           ? {}
-          : ({ "--fit": `${labelFit(n, w, h, shape === "drum" ? 16 : 0)}px` } as CSSProperties)),
+          : ({
+              "--fit": `${labelFit(n, w, h, shape === "drum" ? 16 : 0)}px`,
+              "--fit-far": `${labelFit(n, w, h, shape === "drum" ? 16 : 0, true)}px`,
+            } as CSSProperties)),
       }}
       title={n.id}
     >
@@ -290,6 +292,24 @@ function ZoomVar() {
     el?.classList.toggle("far", z < 0.7);
   }, [z, el]);
   return null;
+}
+
+/** The minimap only while part of the map is off screen: at fit it would hide a corner box. */
+function Mini({ w, h }: { w: number; h: number }) {
+  const off = useStore((s) => {
+    const [x, y, z] = s.transform;
+    return x < -1 || y < -1 || x + w * z > s.width + 1 || y + h * z > s.height + 1;
+  });
+  if (!off) return null;
+  return (
+    <MiniMap
+      pannable
+      zoomable
+      nodeClassName={(n) =>
+        `mm role-${(n.data as BoxData).n.role}${(n.data as BoxData).open ? " mm-zone" : ""}`
+      }
+    />
+  );
 }
 
 const nodeTypes = { box: Box };
@@ -371,6 +391,7 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
     return map.levels.flatMap((lv) => {
       const level = data.levels[lv.id];
       if (!level) return [];
+      const drawn = level.edges.filter((e) => !e.implied).length;
       return level.edges.map((e, i) => {
         const route = lv.laid.extra?.[i];
         const a = at.get(e.from);
@@ -388,7 +409,7 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
           ...e,
           points,
           grid: !route?.length,
-          crowd: level.edges.length,
+          crowd: drawn,
         };
       });
     });
@@ -547,15 +568,7 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
         onNodeMouseLeave={() => setHover(undefined)}
       >
         <ZoomVar />
-        {map.boxes.length > 12 && (
-          <MiniMap
-            pannable
-            zoomable
-            nodeClassName={(n) =>
-              `mm role-${(n.data as BoxData).n.role}${(n.data as BoxData).open ? " mm-zone" : ""}`
-            }
-          />
-        )}
+        {map.boxes.length > 12 && <Mini w={map.w} h={map.h} />}
       </ReactFlow>
     </div>
   );
