@@ -243,6 +243,8 @@ code {
   --sk-w: 1.1px;
   cursor: pointer;
   transition: opacity 0.18s var(--ease);
+  /* A label reflow at a zoom step stays inside its box. */
+  contain: layout style;
 }
 /* Right and below: + STACK (size.ts) for the stacked sheets. */
 .box:not(.zoned) {
@@ -449,7 +451,7 @@ code {
 .far .box .sub {
   display: none;
 }
-.box.dim {
+.picking .box:not(.lit, .zoned) {
   opacity: 0.38;
 }
 .box.drift-change {
@@ -541,7 +543,7 @@ code {
   stroke: var(--accent);
   stroke-opacity: 1;
 }
-.line.dim {
+.picking .line:not(.hot, .faint) {
   stroke-opacity: 0.12;
 }
 .line.faint {

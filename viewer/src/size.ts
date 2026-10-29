@@ -12,11 +12,21 @@ const PAD = { x: 30, y: 22 };
 const W = { min: 150, max: 260 };
 
 let ctx: CanvasRenderingContext2D | null | undefined;
+// measureText and a font switch cost; the same words come back on every layout and fit
+const widths = new Map<string, number>();
+// a width read before Figtree loads is the fallback font's
+if (typeof document !== "undefined")
+  document.fonts?.addEventListener("loadingdone", () => widths.clear());
 const width = (text: string, font: string) => {
+  const key = `${font}\0${text}`;
+  const hit = widths.get(key);
+  if (hit !== undefined) return hit;
   ctx ??= document.createElement("canvas").getContext("2d");
   if (!ctx) return text.length * 7;
-  ctx.font = font;
-  return ctx.measureText(text).width;
+  if (ctx.font !== font) ctx.font = font;
+  const w = ctx.measureText(text).width;
+  widths.set(key, w);
+  return w;
 };
 
 /** Rows `text` takes at `max` px, breaking at spaces (a label also after - . / _). */

@@ -30,8 +30,12 @@ type BoxData = {
   fanIn: number;
   /** The label's prefix shared with a sibling (size.ts stemOf). */
   stem: string;
+  /** Label font caps (size.ts labelFit), near and far; 0 when open. */
+  fit: number;
+  fitFar: number;
   selected: boolean;
-  dim: boolean;
+  /** Selected or a neighbour: stays bright while `.picking` dims the rest. */
+  lit: boolean;
   onToggle(id: string, on: boolean): void;
 };
 type LineData = {
@@ -39,7 +43,6 @@ type LineData = {
   n: number;
   type: boolean;
   hot: boolean;
-  dim: boolean;
   faint: boolean;
 };
 
@@ -79,6 +82,66 @@ const seedOf = (id: string) => {
 /** Drum lid depth; the label moves down by it. */
 export const lid = (h: number) => Math.min(8, h * 0.13);
 
+type Stroke = { d: string; fill?: string | undefined; back?: true };
+// Rough.js is the costliest part of a box; a box remounts on every pan (onlyRenderVisibleElements)
+const strokes = new Map<string, Stroke[]>();
+function strokesOf(id: string, shape: Shape, w: number, h: number): Stroke[] {
+  const key = `${id}|${shape}|${w}|${h}`;
+  let hit = strokes.get(key);
+  if (!hit) {
+    if (strokes.size > 20_000) strokes.clear();
+    hit = draw(id, shape, w, h);
+    strokes.set(key, hit);
+  }
+  return hit;
+}
+function draw(id: string, shape: Shape, w: number, h: number): Stroke[] {
+  const o: Options = {
+    seed: seedOf(id),
+    roughness: 0.55,
+    bowing: 0.5,
+    strokeWidth: 1.3,
+    fill: "fill",
+    fillStyle: "solid",
+    // toPaths drops strokeLineDash; CSS dashes the zone.
+    ...(shape === "zone" ? { disableMultiStroke: true } : {}),
+  };
+  const { fill: _, fillStyle: __, ...line } = o;
+  const m = 1.5;
+  const open = shape === "zone";
+  const W = w - 2 * m - (open ? 0 : STACK);
+  const H = h - 2 * m - (open ? 0 : STACK);
+  const at = (d: string) => sketch.path(d, o);
+  let ds: Drawable[];
+  if (shape === "pill") {
+    const r = Math.min(H / 2, 18);
+    ds = [
+      at(
+        `M${m + r},${m} H${m + W - r} A${r},${r} 0 0 1 ${m + W},${m + r} V${m + H - r} A${r},${r} 0 0 1 ${m + W - r},${m + H} H${m + r} A${r},${r} 0 0 1 ${m},${m + H - r} V${m + r} A${r},${r} 0 0 1 ${m + r},${m} Z`,
+      ),
+    ];
+  } else if (shape === "drum") {
+    const rx = W / 2;
+    const ry = lid(H);
+    const top = m + ry;
+    const bot = m + H - ry;
+    ds = [
+      at(
+        `M${m},${top} V${bot} A${rx},${ry} 0 0 0 ${m + W},${bot} V${top} A${rx},${ry} 0 0 0 ${m},${top} Z`,
+      ),
+      sketch.path(`M${m},${top} A${rx},${ry} 0 0 0 ${m + W},${top}`, line),
+    ];
+  } else if (shape === "stack") {
+    // Two sheets behind, offset down-right: it holds more.
+    const back = (d: number) =>
+      sketch
+        .toPaths(sketch.rectangle(m + d, m + d, W, H, o))
+        .map((q) => ({ d: q.d, fill: q.fill, back: true as const }));
+    return [...back(STACK), ...back(STACK / 2), ...sketch.toPaths(sketch.rectangle(m, m, W, H, o))];
+  } else ds = [sketch.rectangle(m, m, W, H, o)];
+  return ds.flatMap((d) => sketch.toPaths(d));
+}
+
 const Sketch = memo(function Sketch({
   id,
   shape,
@@ -90,62 +153,14 @@ const Sketch = memo(function Sketch({
   w: number;
   h: number;
 }) {
-  const paths = useMemo(() => {
-    const o: Options = {
-      seed: seedOf(id),
-      roughness: 0.55,
-      bowing: 0.5,
-      strokeWidth: 1.3,
-      fill: "fill",
-      fillStyle: "solid",
-      // toPaths drops strokeLineDash; CSS dashes the zone.
-      ...(shape === "zone" ? { disableMultiStroke: true } : {}),
-    };
-    const { fill: _, fillStyle: __, ...line } = o;
-    const m = 1.5;
-    const open = shape === "zone";
-    const W = w - 2 * m - (open ? 0 : STACK);
-    const H = h - 2 * m - (open ? 0 : STACK);
-    const at = (d: string) => sketch.path(d, o);
-    let ds: Drawable[];
-    if (shape === "pill") {
-      const r = Math.min(H / 2, 18);
-      ds = [
-        at(
-          `M${m + r},${m} H${m + W - r} A${r},${r} 0 0 1 ${m + W},${m + r} V${m + H - r} A${r},${r} 0 0 1 ${m + W - r},${m + H} H${m + r} A${r},${r} 0 0 1 ${m},${m + H - r} V${m + r} A${r},${r} 0 0 1 ${m + r},${m} Z`,
-        ),
-      ];
-    } else if (shape === "drum") {
-      const rx = W / 2;
-      const ry = lid(H);
-      const top = m + ry;
-      const bot = m + H - ry;
-      ds = [
-        at(
-          `M${m},${top} V${bot} A${rx},${ry} 0 0 0 ${m + W},${bot} V${top} A${rx},${ry} 0 0 0 ${m},${top} Z`,
-        ),
-        sketch.path(`M${m},${top} A${rx},${ry} 0 0 0 ${m + W},${top}`, line),
-      ];
-    } else if (shape === "stack") {
-      // Two sheets behind, offset down-right: it holds more.
-      const back = (d: number) =>
-        sketch.toPaths(sketch.rectangle(m + d, m + d, W, H, o)).map((q) => ({ ...q, back: true }));
-      return [
-        ...back(STACK),
-        ...back(STACK / 2),
-        ...sketch.toPaths(sketch.rectangle(m, m, W, H, o)),
-      ];
-    } else ds = [sketch.rectangle(m, m, W, H, o)];
-    return ds.flatMap((d) => sketch.toPaths(d));
-  }, [id, shape, w, h]);
   return (
     <svg className="sk" width={w} height={h} aria-hidden="true">
-      {paths.map((p, i) => (
+      {strokesOf(id, shape, w, h).map((p, i) => (
         <path
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed strokes of one shape
           key={i}
           d={p.d}
-          className={`${p.fill && p.fill !== "none" ? "f" : "s"}${"back" in p ? " back" : ""}`}
+          className={`${p.fill && p.fill !== "none" ? "f" : "s"}${p.back ? " back" : ""}`}
         />
       ))}
     </svg>
@@ -211,7 +226,7 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
     open ? "zoned" : "",
     n.drift ? `drift-${n.drift}` : "",
     data.selected ? "sel" : "",
-    data.dim ? "dim" : "",
+    data.lit ? "lit" : "",
   ].join(" ");
   return (
     <div
@@ -224,10 +239,7 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
         ...(shape === "drum" ? { paddingTop: 2 * lid(h) + 4 } : {}),
         ...(open
           ? {}
-          : ({
-              "--fit": `${labelFit(n, w, h, shape === "drum" ? 16 : 0)}px`,
-              "--fit-far": `${labelFit(n, w, h, shape === "drum" ? 16 : 0, true, data.stem)}px`,
-            } as CSSProperties)),
+          : ({ "--fit": `${data.fit}px`, "--fit-far": `${data.fitFar}px` } as CSSProperties)),
       }}
       title={n.id}
     >
@@ -280,7 +292,6 @@ function Line({ id, data, markerEnd }: EdgeProps<Edge<LineData>>) {
     "line",
     data?.type ? "type" : "",
     data?.hot ? "hot" : "",
-    data?.dim ? "dim" : "",
     data?.faint ? "faint" : "",
   ].join(" ");
   return (
@@ -294,14 +305,19 @@ function Line({ id, data, markerEnd }: EdgeProps<Edge<LineData>>) {
   );
 }
 
+/** Zoom in quarter octaves: label sizes on screen stay within ±9%, and labels reflow only at a step. */
+const band = (z: number) => 2 ** (Math.round(Math.log2(z) * 4) / 4);
 /** Labels grow as the view shrinks, so a wide map still reads at fit. */
 function ZoomVar() {
-  const z = useStore((s) => s.transform[2]);
+  const z = useStore((s) => band(s.transform[2]));
+  const far = useStore((s) => s.transform[2] < 0.7);
   const el = useStore((s) => s.domNode);
   useEffect(() => {
     el?.style.setProperty("--z", String(z));
-    el?.classList.toggle("far", z < 0.7);
   }, [z, el]);
+  useEffect(() => {
+    el?.classList.toggle("far", far);
+  }, [far, el]);
   return null;
 }
 
@@ -312,16 +328,10 @@ function Mini({ w, h }: { w: number; h: number }) {
     return x < -1 || y < -1 || x + w * z > s.width + 1 || y + h * z > s.height + 1;
   });
   if (!off) return null;
-  return (
-    <MiniMap
-      pannable
-      zoomable
-      nodeClassName={(n) =>
-        `mm role-${(n.data as BoxData).n.role}${(n.data as BoxData).open ? " mm-zone" : ""}`
-      }
-    />
-  );
+  return <MiniMap pannable zoomable nodeClassName={mmClass} />;
 }
+const mmClass = (n: Node) =>
+  `mm role-${(n.data as BoxData).n.role}${(n.data as BoxData).open ? " mm-zone" : ""}`;
 
 const nodeTypes = { box: Box };
 const edgeTypes = { line: Line };
@@ -443,63 +453,89 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
     for (const l of Object.values(data.levels)) for (const b of l.boxes) m.set(b.id, b.fanIn);
     return m;
   }, [data]);
+  // Per frame: text fits and stems. Per selection: only the flags; `.picking` dims the rest in CSS,
+  // so a pick re-renders only the boxes it lights.
+  const base = useMemo(() => {
+    const sibs = new Map<string, string[]>();
+    return (map?.boxes ?? []).map((b) => {
+      const n = data.nodes[b.id] as TreeNode;
+      const p = n.parent ?? "";
+      let labels = sibs.get(p);
+      if (!labels) {
+        labels = (data.nodes[p]?.kids ?? []).map((k) => data.nodes[k]?.label ?? "");
+        sibs.set(p, labels);
+      }
+      const stem = stemOf(n.label, labels);
+      const top = shapeOf(n) === "drum" ? 16 : 0;
+      return {
+        b,
+        data: {
+          n,
+          w: b.w,
+          h: b.h,
+          open: b.open,
+          folds: !!data.levels[b.id],
+          fanIn: fanIn.get(b.id) ?? 0,
+          stem,
+          fit: b.open ? 0 : labelFit(n, b.w, b.h, top),
+          fitFar: b.open ? 0 : labelFit(n, b.w, b.h, top, true, stem),
+          onToggle,
+        },
+      };
+    });
+  }, [map, data, fanIn, onToggle]);
+  const made = useRef(new WeakMap<object, Node<BoxData>>());
   const nodes = useMemo<Node<BoxData>[]>(
     () =>
-      (map?.boxes ?? []).map((b) => {
-        const n = data.nodes[b.id] as TreeNode;
-        return {
+      base.map((at) => {
+        const { b, data: d } = at;
+        const selected = b.id === sel;
+        const lit = selected || near.has(b.id);
+        const old = made.current.get(at);
+        if (old && old.data.selected === selected && old.data.lit === lit) return old;
+        const node = {
           id: b.id,
           type: "box",
           position: { x: b.x, y: b.y },
           width: b.w,
           height: b.h,
           draggable: false,
-          data: {
-            n,
-            w: b.w,
-            h: b.h,
-            open: b.open,
-            folds: !!data.levels[b.id],
-            fanIn: fanIn.get(b.id) ?? 0,
-            stem: stemOf(
-              n.label,
-              (data.nodes[n.parent ?? ""]?.kids ?? []).map((k) => data.nodes[k]?.label ?? ""),
-            ),
-            selected: b.id === sel,
-            dim: !!sel && b.id !== sel && !near.has(b.id) && !b.open,
-            onToggle,
-          },
+          data: { ...d, selected, lit },
         };
+        made.current.set(at, node);
+        return node;
       }),
-    [map, data, fanIn, sel, near, onToggle],
+    [base, sel, near],
   );
+  const drawn = useRef(new WeakMap<object, Edge<LineData>>());
   const edges = useMemo<Edge<LineData>[]>(
     () =>
       lines.flatMap((e) => {
         const hot = !!lit && (e.from === lit || e.to === lit);
         // A grid has no routed lines: the selected box's only, straight.
         if (e.grid && !hot) return [];
-        return [
-          {
-            id: e.id,
-            source: e.from,
-            target: e.to,
-            type: "line",
-            ...(hot || e.crowd <= FAINT_OVER
-              ? { markerEnd: { type: MarkerType.ArrowClosed, width: 11, height: 11 } }
-              : {}),
-            data: {
-              points: e.points,
-              n: e.n,
-              type: e.type,
-              hot,
-              dim: !!sel && !hot,
-              faint: !hot && e.crowd > FAINT_OVER,
-            },
+        const old = drawn.current.get(e);
+        if (old && old.data?.hot === hot) return [old];
+        const edge: Edge<LineData> = {
+          id: e.id,
+          source: e.from,
+          target: e.to,
+          type: "line",
+          ...(hot || e.crowd <= FAINT_OVER
+            ? { markerEnd: { type: MarkerType.ArrowClosed, width: 11, height: 11 } }
+            : {}),
+          data: {
+            points: e.points,
+            n: e.n,
+            type: e.type,
+            hot,
+            faint: !hot && e.crowd > FAINT_OVER,
           },
-        ];
+        };
+        drawn.current.set(e, edge);
+        return [edge];
       }),
-    [lines, sel, lit],
+    [lines, lit],
   );
 
   // Arrows move the selection to the nearest box that way.
@@ -553,7 +589,7 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
   if (!laid || !map) return <div className="canvas msg">Laying out…</div>;
   const closed = map.boxes.filter((b) => !b.parent).length;
   return (
-    <div className="canvas" ref={wrap}>
+    <div className={sel ? "canvas picking" : "canvas"} ref={wrap}>
       {rootLevel.grid && map.boxes.every((b) => !b.open) && (
         <p className="hint">
           {rootLevel.edges.length
