@@ -8,6 +8,10 @@
  * Outside: `npm`, each package a reached call resolves into (its declaration in node_modules);
  * `hosts`, each URL host in a string that is sent: a fetch-like call's first argument, or a
  * const named like a base URL (a link built for a page is not a call). The systems layer maps packages to systems.
+ * `calls`: each entry in `watch` it calls, a pattern rule's facts (cards.ts `PatternRule`). A name
+ * matches the callee's name, resolved or not (`withSendKey(…)`, `x.sendOnce(…)`). `Type.method`
+ * also needs the receiver's type named `Type`; `(_, !GET)` filters literal arguments by place: `_`
+ * any, `X` the literal X, `!X` anything but the literal X (a non-literal passes).
  */
 import { Node, type Project, SyntaxKind, type Node as TsNode } from "ts-morph";
 
@@ -18,6 +22,7 @@ export interface Reach {
   hosts: Set<string>;
   /** Names in `keys` it reads: the deps fields a factory hands its routes (`deps.files`). */
   deps: Set<string>;
+  calls: Set<string>;
 }
 
 const TABLE_CALL = /^(?:pgTable|pgView|pgMaterializedView|(\w+)\.(?:table|view|materializedView))$/;
@@ -43,12 +48,55 @@ const PKG = /.*\/node_modules\/((?:@[^/]+\/)?[^/]+)\//;
 
 type Fn = TsNode;
 
+interface Watch {
+  spec: string;
+  type?: string;
+  name: string;
+  args: { not: boolean; lit: string }[];
+}
+
+const WATCH = /^(?:(\w+)\.)?(\w+)(?:\((.*)\))?$/;
+export function watchOf(spec: string): Watch | undefined {
+  const m = WATCH.exec(spec.trim());
+  if (!m?.[2]) return undefined;
+  const args = (m[3] ?? "")
+    .split(",")
+    .map((a) => a.trim())
+    .filter(Boolean)
+    .map((a) =>
+      a === "_" ? { not: false, lit: "" } : { not: a.startsWith("!"), lit: a.replace(/^!/, "") },
+    );
+  return { spec, name: m[2], args, ...(m[1] ? { type: m[1] } : {}) };
+}
+
+/** The type's own name, or its alias's: `SiteClient` for a param typed `SiteClient`. */
+const typeName = (n: TsNode) => {
+  const t = n.getType();
+  return (t.getAliasSymbol() ?? t.getSymbol())?.getName();
+};
+
+const argOk = (a: TsNode | undefined, w: Watch["args"][number]) => {
+  if (!w.lit) return true;
+  const lit =
+    a && (Node.isStringLiteral(a) || Node.isNoSubstitutionTemplateLiteral(a))
+      ? a.getLiteralText()
+      : undefined;
+  return w.not ? lit !== w.lit : lit === w.lit;
+};
+
 export function reader(
   project: Project,
   tables: ReadonlySet<string>,
   /** Deps field names to note when read (see `Reach.deps`). */
   keys: ReadonlySet<string> = new Set(),
+  /** Callees to note (see `Reach.calls`). */
+  watch: ReadonlySet<string> = new Set(),
 ) {
+  const watched = new Map<string, Watch[]>();
+  for (const s of watch) {
+    const w = watchOf(s);
+    if (w) watched.set(w.name, [...(watched.get(w.name) ?? []), w]);
+  }
   // drizzle declarations: the const that holds the table → its id
   const byDecl = new Map<TsNode, string>();
   const names = new Set<string>();
@@ -155,6 +203,7 @@ export function reader(
     for (const p of from.npm) out.npm.add(p);
     for (const h of from.hosts) out.hosts.add(h);
     for (const k of from.deps) out.deps.add(k);
+    for (const k of from.calls) out.calls.add(k);
   };
 
   const read = (root: Fn): Reach => {
@@ -165,7 +214,13 @@ export function reader(
         : root;
     const got = memo.get(fn);
     if (got) return got;
-    const out: Reach = { tables: new Map(), npm: new Set(), hosts: new Set(), deps: new Set() };
+    const out: Reach = {
+      tables: new Map(),
+      npm: new Set(),
+      hosts: new Set(),
+      deps: new Set(),
+      calls: new Set(),
+    };
     memo.set(fn, out);
     const visit = (n: TsNode) => {
       if (Node.isIdentifier(n)) {
@@ -190,6 +245,17 @@ export function reader(
           n,
         );
       } else if (Node.isCallExpression(n) || Node.isNewExpression(n)) {
+        const c = n.getExpression();
+        const ws = watched.get(Node.isPropertyAccessExpression(c) ? c.getName() : c.getText());
+        for (const w of ws ?? []) {
+          if (
+            w.type &&
+            !(Node.isPropertyAccessExpression(c) && typeName(c.getExpression()) === w.type)
+          )
+            continue;
+          const args = n.getArguments() ?? [];
+          if (w.args.every((x, i) => argOk(args[i], x))) out.calls.add(w.spec);
+        }
         // the callee, and a function passed by name (`read(api.accounts)`): it is called in there
         for (const e of [n.getExpression(), ...(n.getArguments() ?? [])]) {
           if (

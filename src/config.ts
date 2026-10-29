@@ -4,7 +4,15 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 /** Gen order: a layer reads only those before it (routes reads schema's tables). */
-export const LAYER_IDS = ["imports", "api", "schema", "routes", "systems", "ui"] as const;
+export const LAYER_IDS = [
+  "imports",
+  "api",
+  "schema",
+  "routes",
+  "systems",
+  "ui",
+  "patterns",
+] as const;
 export type LayerId = (typeof LAYER_IDS)[number];
 
 export const Imports = z.object({
@@ -146,6 +154,8 @@ export const Config = z.object({
       schema: Schema.optional(),
       systems: Systems.optional(),
       ui: Ui.optional(),
+      /** The pattern cards' rules (cards.ts `PatternRule`); needs routes. */
+      patterns: z.object({}).optional(),
     })
     .default({}),
   cards: Cards.optional(),

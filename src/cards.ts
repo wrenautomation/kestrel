@@ -2,14 +2,50 @@
  * The ICM cards' side of the map: the why, trade-offs and extension points. Kestrel reads only
  * their frontmatter: `type`, `entity` (a path that must exist), `covers` (generated node ids),
  * `stamp` (the hash of those nodes when someone last read the card against them), and on a
- * decision card `trigger` (the measure that says the choice is due again).
+ * decision card `trigger` (the measure that says the choice is due again); on a pattern card
+ * `rule` (the check the patterns layer runs).
  */
 import { createHash } from "node:crypto";
 import { access, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { parse } from "yaml";
+import { z } from "zod";
 import { type Measures, measure, Trigger } from "./cost.js";
 import { type Graph, type Node, normalize } from "./graph.js";
+
+/**
+ * A pattern card's check, over each route's walk (layers/reach.ts): a route that `when` picks must
+ * reach one of `must` and none of `never`. `deps`: the factory fields it reads; `reaches`: what it
+ * calls, a name or `Type.method(args)` (layers/reach.ts). No `when`: every route.
+ */
+export const PatternRule = z
+  .object({
+    when: z
+      .object({ deps: z.array(z.string()).optional(), reaches: z.array(z.string()).optional() })
+      .optional(),
+    must: z.array(z.string()).optional(),
+    never: z.array(z.string()).optional(),
+  })
+  .refine((r) => r.must?.length || r.never?.length, "a rule needs `must` or `never`");
+export type PatternRule = z.infer<typeof PatternRule>;
+
+/** Every name a rule asks the walk about. */
+export const ruleNames = (r: PatternRule): string[] => [
+  ...(r.when?.reaches ?? []),
+  ...(r.must ?? []),
+  ...(r.never ?? []),
+];
+
+/** The repo's pattern cards with a good rule, and every name they ask the walk about. */
+export async function patternCards(
+  root: string,
+  dir: string,
+): Promise<{ cards: (Card & { rule: PatternRule })[]; watch: Set<string> }> {
+  const cards = (await readCards(root, dir)).filter(
+    (c): c is Card & { rule: PatternRule } => !!c.rule && !("error" in c.rule),
+  );
+  return { cards, watch: new Set(cards.flatMap((c) => ruleNames(c.rule))) };
+}
 
 export interface Card {
   /** Relative to the repo root. */
@@ -22,6 +58,8 @@ export interface Card {
   stamp?: string;
   /** Decision cards: `trigger: {metric, node?, over}`. A bad one is kept as its error. */
   trigger?: Trigger | { error: string };
+  /** Pattern cards: what the patterns layer checks. A bad one is kept as its error. */
+  rule?: PatternRule | { error: string };
   /** The first paragraph under a `## Why…` heading, else the first after the title. */
   why: string;
 }
@@ -31,6 +69,7 @@ export type CardIssue =
   | { rule: "entity"; card: string; entity: string }
   | { rule: "stale"; card: string }
   | { rule: "trigger"; card: string; error: string }
+  | { rule: "pattern"; card: string; error: string }
   /** The trigger's measure is over its line: the decision is due again. */
   | { rule: "switch"; card: string; trigger: Trigger; now: number }
   /** No report on disk measures it: not a pass. */
@@ -71,6 +110,8 @@ export function parseCard(path: string, text: string): Card | null {
   const stamp = str(f.stamp);
   const t = f.trigger === undefined ? undefined : Trigger.safeParse(f.trigger);
   const trigger = t && (t.success ? t.data : { error: t.error.issues[0]?.message ?? "bad" });
+  const r = f.rule === undefined ? undefined : PatternRule.safeParse(f.rule);
+  const rule = r && (r.success ? r.data : { error: r.error.issues[0]?.message ?? "bad" });
   return {
     path,
     ...(type ? { type } : {}),
@@ -78,6 +119,7 @@ export function parseCard(path: string, text: string): Card | null {
     covers,
     ...(stamp ? { stamp } : {}),
     ...(trigger ? { trigger } : {}),
+    ...(rule ? { rule } : {}),
     why: whyOf(text.slice(m[0].length)),
   };
 }
@@ -201,6 +243,8 @@ export async function checkCards(
     }
     if (c.stamp && c.stamp !== stampOf(c, ix)) issues.push({ rule: "stale", card: c.path });
     const t = c.trigger;
+    if (c.rule && "error" in c.rule)
+      issues.push({ rule: "pattern", card: c.path, error: c.rule.error });
     if (t && "error" in t) issues.push({ rule: "trigger", card: c.path, error: t.error });
     else if (t) {
       const now = measure(t, measures);
@@ -225,6 +269,7 @@ export function formatIssues(issues: readonly CardIssue[]): string {
       if (i.rule === "coverage") return `  no card   ${i.node}`;
       if (i.rule === "entity") return `  gone      ${i.card}: entity ${i.entity}`;
       if (i.rule === "trigger") return `  trigger   ${i.card}: ${i.error}`;
+      if (i.rule === "pattern") return `  rule      ${i.card}: ${i.error}`;
       if (i.rule === "switch")
         return `  switch    ${i.card}: ${what(i.trigger)} is ${Math.round(i.now * 100) / 100}, over ${i.trigger.over}`;
       if (i.rule === "unmeasured")

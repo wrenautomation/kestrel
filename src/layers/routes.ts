@@ -10,7 +10,8 @@
  * services are the `systems` layer's. Route attrs `npm` and `hosts`: what it calls outside. A
  * package more than a quarter of the routes reach is the stack (the SDK, the ORM), left out.
  * Service attr `factory`: the named function the registration sits in. Route attr `deps`: the
- * fields of the factory's first parameter the route's walk names.
+ * fields of the factory's first parameter the route's walk names. Route attr `reaches`: the names
+ * a pattern card's rule asks about that the walk calls (layers/patterns.ts).
  */
 import { relative } from "node:path";
 import {
@@ -24,6 +25,7 @@ import {
   SyntaxKind,
   Node as TsNode,
 } from "ts-morph";
+import { patternCards } from "../cards.js";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
 import { reader } from "./reach.js";
@@ -174,7 +176,10 @@ export const routes: Layer = {
     const sections = await pkgSections(root, await packages(root, opts.packages), SOURCE);
     // table edges name the schema's tables
     const tables = JSON.stringify(tableIds(await prior("schema")));
-    return sections.map((s) => ({ ...s, names: [...(s.names ?? []), tables] }));
+    // and the pattern rules' names
+    const { watch } = await patternCards(root, config.cards?.dir ?? "map");
+    const names = [tables, JSON.stringify([...watch].sort())];
+    return sections.map((s) => ({ ...s, names: [...(s.names ?? []), ...names] }));
   },
   async extract({ root, config, prior }, only) {
     const opts = config.layers.routes ?? { packages: ["packages/*", "apps/*"] };
@@ -191,7 +196,8 @@ export const routes: Layer = {
     for (const file of project.getSourceFiles())
       for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression))
         if (registers(call)) for (const k of factoryOf(call)?.fields ?? []) keys.add(k);
-    const read = reader(project, new Set(tables), keys);
+    const { watch } = await patternCards(root, config.cards?.dir ?? "map");
+    const read = reader(project, new Set(tables), keys, watch);
     for (const file of project.getSourceFiles()) {
       const path = relative(root, file.getFilePath());
       const pkg = ownerOf(path);
@@ -268,6 +274,7 @@ export const routes: Layer = {
           if (r?.hosts.size) route.attrs = { ...route.attrs, hosts: [...r.hosts].sort() };
           const deps = [...(r?.deps ?? [])].filter((k) => factory?.fields.has(k)).sort();
           if (deps.length) route.attrs = { ...route.attrs, deps };
+          if (r?.calls.size) route.attrs = { ...route.attrs, reaches: [...r.calls].sort() };
         }
       }
     }

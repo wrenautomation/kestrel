@@ -6,7 +6,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Config } from "../config.js";
 import type { Graph, Node } from "../graph.js";
 import { api } from "./api.js";
-import { reader } from "./reach.js";
+import { holds, picks } from "./patterns.js";
+import { reader, watchOf } from "./reach.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { factoryLinks, routeLinks, seams, systems } from "./systems.js";
@@ -645,6 +646,73 @@ export function make(deps: { db: Db; files: string }) {
     const home = read(at("home") as never);
     expect([...home.tables.keys()]).toEqual(["table:public.notes"]);
     expect([...read(at("file") as never).deps]).toContain("files");
+  });
+  it("notes a watched call by its receiver's type and its literal args", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    const f = project.createSourceFile(
+      "/w.ts",
+      `type SiteClient = { call(site: string, method: string): unknown };
+declare function withSendKey(k: string): void;
+export function make(site: SiteClient, other: { call(a: string, b: string): unknown }) {
+  return {
+    read: () => site.call("x", "GET"),
+    write: () => site.call("x", "POST"),
+    keyed: () => { withSendKey("k"); return site.call("x", "POST"); },
+    stranger: () => other.call("x", "POST"),
+  };
+}`,
+    );
+    const read = reader(
+      project,
+      new Set(),
+      new Set(),
+      new Set(["SiteClient.call(_, !GET)", "withSendKey"]),
+    );
+    const obj = f
+      .getFunctionOrThrow("make")
+      .getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)[0];
+    const calls = (k: string) => [
+      ...read(
+        obj
+          ?.getPropertyOrThrow(k)
+          .asKindOrThrow(SyntaxKind.PropertyAssignment)
+          .getInitializerOrThrow() as never,
+      ).calls,
+    ];
+    expect(calls("read")).toEqual([]);
+    expect(calls("write")).toEqual(["SiteClient.call(_, !GET)"]);
+    expect(calls("keyed").sort()).toEqual(["SiteClient.call(_, !GET)", "withSendKey"]);
+    expect(calls("stranger")).toEqual([]);
+  });
+
+  it("parses watch specs: a name, a typed method, arg filters", () => {
+    expect(watchOf("sendOnce")).toEqual({ spec: "sendOnce", name: "sendOnce", args: [] });
+    expect(watchOf("SiteClient.call(_, !GET)")).toEqual({
+      spec: "SiteClient.call(_, !GET)",
+      type: "SiteClient",
+      name: "call",
+      args: [
+        { not: false, lit: "" },
+        { not: true, lit: "GET" },
+      ],
+    });
+    expect(watchOf("a b")).toBeUndefined();
+  });
+});
+
+describe("patterns", () => {
+  const rule = { when: { reaches: ["w"] }, must: ["k1", "k2"], never: ["bad"] };
+  it("picks routes by deps or reaches, and every route with no when", () => {
+    expect(picks(rule, [], ["w"])).toBe(true);
+    expect(picks(rule, ["w"], [])).toBe(false);
+    expect(picks({ when: { deps: ["db"] }, must: ["k"] }, ["db"], [])).toBe(true);
+    expect(picks({ must: ["k"] }, [], [])).toBe(true);
+  });
+  it("holds on one must and no never", () => {
+    expect(holds(rule, ["w", "k2"])).toBe(true);
+    expect(holds(rule, ["w"])).toBe(false);
+    expect(holds(rule, ["w", "k1", "bad"])).toBe(false);
+    expect(holds({ never: ["bad"] }, ["w"])).toBe(true);
   });
 });
 

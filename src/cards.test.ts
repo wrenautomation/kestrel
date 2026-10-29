@@ -42,6 +42,16 @@ describe("cards", () => {
     expect(loose?.covers).toEqual(["x", "y"]);
   });
 
+  it("reads a pattern rule, and keeps a bad one as an error", () => {
+    const ok = parseCard(
+      "m.md",
+      card("type: pattern\nrule:\n  when: { reaches: [w] }\n  must: [k]"),
+    );
+    expect(ok?.rule).toEqual({ when: { reaches: ["w"] }, must: ["k"] });
+    const bad = parseCard("m.md", card("type: pattern\nrule:\n  when: { reaches: [w] }"));
+    expect(bad?.rule).toEqual({ error: "a rule needs `must` or `never`" });
+  });
+
   it("covers the entity's file and its exports", () => {
     const c = parseCard("m.md", card("entity: packages/a/src/x.ts:1"));
     expect(c && coveredBy(c, indexOf([imports, api("() => void")]))).toEqual([

@@ -26,6 +26,7 @@ export const ROLES = [
   "app",
   "screen",
   "story",
+  "pattern",
 ] as const;
 export type Role = (typeof ROLES)[number];
 
