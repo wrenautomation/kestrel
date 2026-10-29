@@ -208,10 +208,19 @@ export function coveredBy(card: Card, ix: CardIndex): string[] {
 }
 
 /** Hash of the approved nodes a card covers. An id with no node counts, so a removal shows. */
+/** A lock bump changes no card's why: `versions` stays out of the stamp. */
+const unpinned = (n: Node): Node => {
+  if (!n.attrs?.versions) return n;
+  const { versions: _, ...attrs } = n.attrs;
+  return { ...n, attrs };
+};
+
 export function stampOf(card: Card, ix: CardIndex): string {
   const g = normalize({
     layer: "cards",
-    nodes: coveredBy(card, ix).map((id) => ix.nodes.get(id) ?? { id, role: "file", group: "-" }),
+    nodes: coveredBy(card, ix).map((id) =>
+      unpinned(ix.nodes.get(id) ?? { id, role: "file", group: "-" }),
+    ),
     edges: [],
   });
   return createHash("sha256").update(JSON.stringify(g.nodes)).digest("hex").slice(0, 8);

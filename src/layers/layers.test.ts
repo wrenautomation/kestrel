@@ -263,7 +263,9 @@ describe("systems", () => {
     await put("apps/web/package.json", JSON.stringify({ name: "@a/web", description: "The site" }));
     await put(
       "apps/web/wrangler.toml",
-      'name = "app-web"\nmain = "src/index.ts"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "hits"\n',
+      'name = "app-web"\nmain = "src/index.ts"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "hits"\n' +
+        '# Each room\'s live notes.\n[[durable_objects.bindings]]\nname = "ROOM"\nclass_name = "NoteRoom"\n' +
+        '[[ratelimits]]\nname = "LIMIT"\nnamespace_id = "1001"\n',
     );
     await put("apps/web/src/index.ts", 'import { send } from "./send.js";\n');
     await put(
@@ -321,6 +323,8 @@ describe("systems", () => {
       ["system:stripe", null, null],
       ["system:app.worker:web", "system:app", "The site"],
       ["system:app.d1:hits", "system:app", null],
+      ["system:app.do:NoteRoom", "system:app", "Each room's live notes"],
+      ["system:app.ratelimit:LIMIT", "system:app", null],
       ["system:app.host:box", "system:app", "The box"],
       ["system:app.container:cache", "system:app.host:box", "Valkey for the admin reads"],
     ]);
@@ -331,6 +335,20 @@ describe("systems", () => {
         "binds",
         "system:app.d1:hits",
         ["binding `hits`"],
+        ["apps/web/wrangler.toml"],
+      ],
+      [
+        "system:app.worker:web",
+        "binds",
+        "system:app.do:NoteRoom",
+        ["binding `NoteRoom`"],
+        ["apps/web/wrangler.toml"],
+      ],
+      [
+        "system:app.worker:web",
+        "binds",
+        "system:app.ratelimit:LIMIT",
+        ["binding `LIMIT`"],
         ["apps/web/wrangler.toml"],
       ],
       ["system:app.worker:web", "calls", "system:mail", ["`APP_MAIL_URL`"], [send]],

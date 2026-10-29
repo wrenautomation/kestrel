@@ -2,7 +2,8 @@
  * Repos, deploy units and the links between them, from the code. Only what code cannot say is
  * written by hand: the residue in kestrel.json (`layers.systems`).
  *
- * Units (role `part`): `wrangler.toml` (a Worker and its D1, KV, R2 and service bindings),
+ * Units (role `part`): `wrangler.toml` (a Worker and its D1, KV, R2, Durable Object, rate limit
+ * and service bindings),
  * Terraform (Lambda functions, instances, buckets, CloudFront), compose files (one per service),
  * and a `# @unit [kind:]name: one line` tag in any other deploy file (a container script, a
  * systemd unit). A unit's bundle is every file the imports graph reaches from its entry, type-only
@@ -90,9 +91,11 @@ async function wrangler(root: string, repo: string, globs: readonly string[]) {
     const text = await readFile(join(root, f), "utf8");
     const t = toml(text) as Record<string, unknown>;
     const lines = text.split("\n");
-    // the comment above the `[[...]]` table that holds `binding = "<b>"`
+    // the comment above the `[[...]]` table that holds `binding = "<b>"` (`name` for a DO, a limit)
     const why = (b: unknown) => {
-      let at = lines.findIndex((l) => new RegExp(`^\\s*binding\\s*=\\s*"${String(b)}"`).test(l));
+      let at = lines.findIndex((l) =>
+        new RegExp(`^\\s*(?:binding|name)\\s*=\\s*"${String(b)}"`).test(l),
+      );
       while (at > 0 && !(lines[at] ?? "").startsWith("[")) at--;
       const c = at > 0 ? commentAbove(lines, at) : "";
       return c ? sentence(c) : undefined;
@@ -121,6 +124,10 @@ async function wrangler(root: string, repo: string, globs: readonly string[]) {
     for (const b of arr("kv_namespaces")) store("kv", b.binding, "Cloudflare KV", b.binding);
     for (const b of arr("r2_buckets"))
       store("r2", b.bucket_name ?? b.binding, "Cloudflare R2", b.binding);
+    const dos = (t.durable_objects as { bindings?: unknown } | undefined)?.bindings;
+    for (const b of Array.isArray(dos) ? (dos as Record<string, unknown>[]) : [])
+      store("do", b.class_name ?? b.name, "Durable Object", b.name);
+    for (const b of arr("ratelimits")) store("ratelimit", b.name, "Cloudflare rate limit", b.name);
     for (const b of arr("services"))
       if (typeof b.service === "string")
         links.push({
