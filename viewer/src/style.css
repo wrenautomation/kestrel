@@ -246,7 +246,9 @@ code {
 }
 .box:not(.zoned) .sk {
   filter: drop-shadow(0 1px 1px rgb(14 14 14 / 0.05)) drop-shadow(0 6px 10px rgb(40 30 70 / 0.06));
-  transition: filter 0.18s var(--ease), translate 0.18s var(--ease);
+  transition:
+    filter 0.18s var(--ease),
+    translate 0.18s var(--ease);
 }
 .box:not(.zoned):hover .sk {
   filter: drop-shadow(0 2px 2px rgb(14 14 14 / 0.06)) drop-shadow(0 12px 18px rgb(40 30 70 / 0.12));
@@ -449,7 +451,8 @@ code {
   --sk-fill: color-mix(in srgb, var(--accent) 7%, var(--paper));
 }
 .box.sel .sk {
-  filter: drop-shadow(0 0 0.5px var(--accent)) drop-shadow(0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent));
+  filter: drop-shadow(0 0 0.5px var(--accent))
+    drop-shadow(0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent));
 }
 .box .badge {
   position: absolute;

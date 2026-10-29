@@ -128,15 +128,19 @@ const Sketch = memo(function Sketch({
       // Two sheets behind, offset down-right: it holds more.
       const back = (d: number) =>
         sketch.toPaths(sketch.rectangle(m + d, m + d, W, H, o)).map((q) => ({ ...q, back: true }));
-      return [...back(STACK), ...back(STACK / 2), ...sketch.toPaths(sketch.rectangle(m, m, W, H, o))];
+      return [
+        ...back(STACK),
+        ...back(STACK / 2),
+        ...sketch.toPaths(sketch.rectangle(m, m, W, H, o)),
+      ];
     } else ds = [sketch.rectangle(m, m, W, H, o)];
     return ds.flatMap((d) => sketch.toPaths(d));
   }, [id, shape, w, h]);
   return (
     <svg className="sk" width={w} height={h} aria-hidden="true">
       {paths.map((p, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: fixed strokes of one shape
         <path
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed strokes of one shape
           key={i}
           d={p.d}
           className={`${p.fill && p.fill !== "none" ? "f" : "s"}${"back" in p ? " back" : ""}`}
@@ -160,7 +164,12 @@ function subOf(n: TreeNode, fanIn: number): string {
 }
 
 /** The kicker word: what kind of thing the box is. */
-const KIND_WORD: Record<string, string> = { dir: "folder", db: "database", systems: "systems", screens: "screens" };
+const KIND_WORD: Record<string, string> = {
+  dir: "folder",
+  db: "database",
+  systems: "systems",
+  screens: "screens",
+};
 const kindOf = (n: TreeNode) => n.kind ?? KIND_WORD[n.role] ?? n.role;
 /** No kicker when it only says the name again (systems, screens, database). */
 const kickOf = (n: TreeNode) => {
