@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { glob, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Project } from "ts-morph";
+import { parse } from "yaml";
 import { filesOf, type Section } from "../cache.js";
 
 export interface Pkg {
@@ -57,6 +58,28 @@ function entries(dir: string, exp: unknown): Record<string, string> {
     const path = typeof c === "string" ? c : (c?.types ?? c?.import ?? c?.default);
     if (typeof path === "string" && /\.(m?ts|tsx)$/.test(path) && !sub.includes("*"))
       out[sub] = join(dir, path);
+  }
+  return out;
+}
+
+/**
+ * Each package's outside versions as pnpm resolved them: dir (with `/`) → name → version. From
+ * `pnpm-lock.yaml` importers; workspace links and the peer suffix (`(react@19)`) left out.
+ */
+export async function lockVersions(root: string): Promise<Map<string, Map<string, string>>> {
+  const out = new Map<string, Map<string, string>>();
+  const text = await readFile(join(root, "pnpm-lock.yaml"), "utf8").catch(() => "");
+  if (!text) return out;
+  type Dep = Record<string, { version?: string } | undefined>;
+  const lock = parse(text) as { importers?: Record<string, Record<string, Dep | undefined>> };
+  for (const [dir, imp] of Object.entries(lock.importers ?? {})) {
+    const v = new Map<string, string>();
+    for (const k of ["dependencies", "devDependencies", "optionalDependencies"])
+      for (const [name, d] of Object.entries(imp[k] ?? {})) {
+        const ver = d?.version?.split("(")[0];
+        if (ver && !/^(link|file):/.test(ver)) v.set(name, ver);
+      }
+    out.set(`${dir}/`, v);
   }
   return out;
 }

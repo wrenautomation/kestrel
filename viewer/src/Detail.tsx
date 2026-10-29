@@ -8,6 +8,7 @@ import type {
   Service,
   ViewData,
 } from "../../src/view/types";
+import { withVersions } from "../../src/view/versions";
 
 interface Props {
   data: ViewData;
@@ -444,7 +445,7 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
               <h3>
                 Outside packages <span className="n">{npm.length}</span>
               </h3>
-              <p className="npm">{[...npm].sort().join(", ")}</p>
+              <p className="npm">{withVersions(npm, d?.attrs?.versions).join(", ")}</p>
             </section>
           )}
           <Services list={d.services} mark={mark} onGo={onGo} />

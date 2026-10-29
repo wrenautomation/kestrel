@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Graph, Node } from "./graph.js";
-import { cycles, FLAT_OVER, fromGraphs, fromJscpd, fromKnip, page } from "./health.js";
+import { cycles, FLAT_OVER, fromGraphs, fromJscpd, fromKnip, page, pinsBehind } from "./health.js";
 
 const file = (id: string, parent = "pkg"): Node => ({ id, role: "file", parent, group: parent });
 const imp = (from: string, to: string, type = false): Edge => ({
@@ -108,5 +108,29 @@ describe("page", () => {
     expect(md).toContain("- `a`, `b`");
     expect(md).not.toContain("Duplicated lines");
     expect(md).not.toContain("Unused");
+  });
+});
+
+describe("pinsBehind", () => {
+  const pkg = (id: string, versions: string[]): Node => ({
+    id,
+    role: "package",
+    group: id,
+    attrs: { versions },
+  });
+  const g = graph("imports", [
+    pkg("@x/a", ["@own/m@1.0.0", "react@19.0.0"]),
+    pkg("@x/b", ["@own/m@1.2.0", "@own/n@2.0.0"]),
+  ]);
+  const reg = async (n: string) => (n === "@own/m" ? ["1.0.0", "1.1.0", "1.2.0"] : ["2.0.0"]);
+
+  it("counts publishes after each pin in an owned scope", async () => {
+    expect(await pinsBehind(g, ["@own/"], reg)).toEqual([
+      { pkg: "@x/a", name: "@own/m", pinned: "1.0.0", latest: "1.2.0", n: 2 },
+    ]);
+  });
+
+  it("asks nothing with no scopes", async () => {
+    expect(await pinsBehind(g, [], reg)).toEqual([]);
   });
 });

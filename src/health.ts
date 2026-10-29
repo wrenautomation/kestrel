@@ -1,7 +1,7 @@
 /**
  * The health report: signals, not a gate. Cycles, flat folders, fan-in and fan-out, and weak
  * interfaces come from the stored graphs; duplicates from jscpd; unused exports, types and
- * dependencies from knip. It is not part of the map, so nothing approves it. Package layers and
+ * dependencies from knip; pins behind from the npm registry. It is not part of the map, so nothing approves it. Package layers and
  * package cycles are the repo's own gate (wren `scripts/layers-guard.mjs`); this adds the file
  * cycles inside a package. jscpd and knip are heavy: the caller runs `kestrel health` under the
  * repo's check lock.
@@ -43,6 +43,50 @@ export interface Health {
   inferred: { pkg: string; n: number; of: number }[];
   duplicates?: { percent: number; clones: number; lines: number; top: Clone[] };
   unused?: { exports: Unused[]; types: Unused[]; dependencies: Unused[] };
+  /** A pin in an owned scope with newer publishes: `n` versions after it. */
+  behind?: Behind[];
+}
+
+export interface Behind {
+  pkg: string;
+  name: string;
+  pinned: string;
+  latest: string;
+  n: number;
+}
+
+/** Package `versions` attrs (imports layer) in `scopes`, against each name's published list. */
+export async function pinsBehind(
+  imports: Graph | null,
+  scopes: readonly string[],
+  /** Published versions, oldest first; the registry by default. */
+  published: (name: string) => Promise<string[]> = async (name) =>
+    JSON.parse((await run("npm", ["view", name, "versions", "--json"])).stdout) as string[],
+): Promise<Behind[]> {
+  if (!scopes.length) return [];
+  const pins: Omit<Behind, "latest" | "n">[] = [];
+  for (const n of imports?.nodes ?? [])
+    for (const v of Array.isArray(n.attrs?.versions) ? (n.attrs.versions as string[]) : []) {
+      const i = v.lastIndexOf("@");
+      const name = v.slice(0, i);
+      if (scopes.some((s) => name.startsWith(s)))
+        pins.push({ pkg: n.id, name, pinned: v.slice(i + 1) });
+    }
+  const lists = new Map<string, string[]>();
+  await Promise.all(
+    [...new Set(pins.map((p) => p.name))].map(async (n) => {
+      const l = await published(n).catch(() => []);
+      lists.set(n, Array.isArray(l) ? l : [l]);
+    }),
+  );
+  return pins
+    .flatMap((p) => {
+      const l = lists.get(p.name) ?? [];
+      const at = l.indexOf(p.pinned);
+      const latest = l.at(-1);
+      return at >= 0 && latest && at < l.length - 1 ? [{ ...p, latest, n: l.length - 1 - at }] : [];
+    })
+    .sort((a, b) => b.n - a.n || a.pkg.localeCompare(b.pkg) || a.name.localeCompare(b.name));
 }
 
 /** Tarjan's strongly connected components; each with more than one file is a cycle. */
@@ -247,7 +291,14 @@ export function page(h: Health): string {
       `| Unused types | ${h.unused.types.length} |`,
       `| Unused dependencies | ${h.unused.dependencies.length} |`,
     );
+  if (h.behind) L.push(`| Pins behind | ${h.behind.length} |`);
   L.push("");
+  if (h.behind?.length) {
+    L.push("## Pins behind", "", "| Package | Pin | Latest | Behind |", "|---|---|---|---|");
+    for (const b of h.behind)
+      L.push(`| ${tick(b.pkg)} | ${tick(`${b.name}@${b.pinned}`)} | ${b.latest} | ${b.n} |`);
+    L.push("");
+  }
   if (h.cycles.length) {
     L.push(
       "## File cycles",

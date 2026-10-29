@@ -2,7 +2,8 @@
  * Who imports whom, from dependency-cruiser. Nodes: each package and each source file in it.
  * Edges: file → file, and package → package where any file crosses. Type-only imports are
  * edges too, marked `type: true`: a type still couples two files. A one-liner (`description`) is
- * the package.json description or the first sentence of a file's header comment.
+ * the package.json description or the first sentence of a file's header comment. A package's
+ * `versions`: `name@version` of each outside package it imports, from pnpm-lock.yaml.
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -11,8 +12,9 @@ import { cruise } from "dependency-cruiser";
 import extractTSConfig from "dependency-cruiser/config-utl/extract-ts-config";
 import { Imports } from "../config.js";
 import type { Edge, Graph, Node } from "../graph.js";
+import { withVersions } from "../view/versions.js";
 import type { Layer } from "./layer.js";
-import { headerLine, type Pkg, packages, pkgSections } from "./workspace.js";
+import { headerLine, lockVersions, type Pkg, packages, pkgSections } from "./workspace.js";
 
 interface CruiseModule {
   source: string;
@@ -36,18 +38,29 @@ export const imports: Layer = {
   id: "imports",
   async sections({ root, config }) {
     const opts = config.layers.imports ?? Imports.parse({});
-    return pkgSections(
+    const pkgs = await packages(root, opts.packages);
+    const lock = await lockVersions(root);
+    const secs = await pkgSections(
       root,
-      await packages(root, opts.packages),
+      pkgs,
       ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"],
       opts.exclude.map((x) => new RegExp(x)),
       "layout",
     );
+    // a lock change for one package re-reads only that package
+    const dirOf = new Map(pkgs.map((p) => [p.name, p.dir]));
+    return secs.map((s) => {
+      const v = lock.get(dirOf.get(s.group) ?? "");
+      return v?.size
+        ? { ...s, names: [...(s.names ?? []), ...[...v].map(([n, x]) => `lock:${n}@${x}`)] }
+        : s;
+    });
   },
   async extract({ root, config }, only) {
     const opts = config.layers.imports ?? Imports.parse({});
     const pkgs = await packages(root, opts.packages);
     const mine = only ? pkgs.filter((p) => only.has(p.name)) : pkgs;
+    const lock = await lockVersions(root);
     const repo = `repo:${basename(root)}`;
     const ownerOf = (path: string) => pkgs.find((p) => path.startsWith(p.dir));
     const tsConfig = ["tsconfig.json", "tsconfig.base.json"].find((f) => existsSync(join(root, f)));
@@ -133,7 +146,10 @@ export const imports: Layer = {
     }
     for (const n of nodes) {
       const deps = npm.get(n.id);
-      if (n.role === "package" && deps?.size) n.attrs = { ...n.attrs, npm: [...deps] };
+      if (n.role !== "package" || !deps?.size) continue;
+      const v = lock.get(String(n.attrs?.dir));
+      const versions = [...deps].flatMap((d) => (v?.has(d) ? [`${d}@${v.get(d)}`] : []));
+      n.attrs = { ...n.attrs, npm: [...deps], ...(versions.length ? { versions } : {}) };
     }
     return { layer: "imports", nodes, edges };
   },
@@ -163,7 +179,7 @@ function page(g: Graph): Record<string, string> {
   }
   const npm = pkg.attrs?.npm;
   if (Array.isArray(npm) && npm.length)
-    lines.push("## Outside packages", "", [...npm].sort().join(", "), "");
+    lines.push("## Outside packages", "", withVersions(npm, pkg.attrs?.versions).join(", "), "");
   if (files.length) {
     // One node per top folder: a diagram of every file is too big to render past ~200 files.
     const folder = (id: string) => {

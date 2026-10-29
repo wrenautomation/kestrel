@@ -11,7 +11,7 @@ import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { factoryLinks, routeLinks, seams, systems } from "./systems.js";
 import { pageEdges, readStory, recordReads, recordTables, screenCalls } from "./ui.js";
-import { headerLine } from "./workspace.js";
+import { headerLine, lockVersions } from "./workspace.js";
 
 const FILES: Record<string, string> = {
   "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "NodeNext" } }),
@@ -730,5 +730,36 @@ describe("systems factoryLinks", () => {
         here: "apps.ts",
       },
     ]);
+  });
+});
+
+describe("lockVersions", () => {
+  it("reads each importer's resolved versions, no links, no peer suffix", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kestrel-lock-"));
+    await writeFile(
+      join(root, "pnpm-lock.yaml"),
+      [
+        "lockfileVersion: '9.0'",
+        "importers:",
+        "  packages/a:",
+        "    dependencies:",
+        "      react-dom:",
+        "        specifier: 19.0.0",
+        "        version: 19.0.0(react@19.0.0)",
+        "      '@x/b':",
+        "        specifier: workspace:*",
+        "        version: link:../b",
+        "    devDependencies:",
+        "      vitest:",
+        "        specifier: 4.0.0",
+        "        version: 4.0.0",
+      ].join("\n"),
+    );
+    const v = await lockVersions(root);
+    expect([...(v.get("packages/a/") ?? [])]).toEqual([
+      ["react-dom", "19.0.0"],
+      ["vitest", "4.0.0"],
+    ]);
+    await rm(root, { recursive: true, force: true });
   });
 });

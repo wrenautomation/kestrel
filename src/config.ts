@@ -10,11 +10,14 @@ export type LayerId = (typeof LAYER_IDS)[number];
 export const Imports = z.object({
   /** Globs of workspace packages; each is one group. */
   packages: z.array(z.string()).default(["packages/*", "apps/*"]),
-  /** Paths dependency-cruiser skips. */
+  /**
+   * Paths dependency-cruiser skips; a match drops the import too, so never a path in node_modules
+   * (a package's `dist/`): `doNotFollow` stops the walk there.
+   */
   exclude: z
     .array(z.string())
     .default([
-      "(^|/)(node_modules|dist|build|coverage|storybook-static)/",
+      "^(?!node_modules/)(dist|build|coverage|storybook-static|.*/(dist|build|coverage|storybook-static))/",
       "\\.test\\.",
       "\\.stories\\.",
     ]),
@@ -101,6 +104,8 @@ const Ui = z.object({
 });
 
 const Health = z.object({
+  /** Package scopes the repo owns elsewhere (`@wrenautomation/`): health counts how far each pin is behind. */
+  pins: z.array(z.string()).default([]),
   /** Folders jscpd reads. */
   paths: z.array(z.string()).default(["packages", "apps"]),
   ignore: z

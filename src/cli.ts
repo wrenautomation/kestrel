@@ -38,7 +38,7 @@ import {
 } from "./cost.js";
 import { diff, formatChanges } from "./diff.js";
 import { byGroup, type Graph, merge, normalize } from "./graph.js";
-import { fromGraphs, page as healthPage, runTools } from "./health.js";
+import { fromGraphs, page as healthPage, pinsBehind, runTools } from "./health.js";
 import { LAYERS } from "./layers/index.js";
 import { seams } from "./layers/systems.js";
 import { packages, tsProject } from "./layers/workspace.js";
@@ -376,9 +376,13 @@ export function program(): Command {
       const r = root();
       const config = await loadConfig(r, cfg().config);
       const store = fileStore(r, config.out);
+      const imports = await store.read("imports", "current");
       const h = {
-        ...fromGraphs(await store.read("imports", "current"), await store.read("api", "current")),
+        ...fromGraphs(imports, await store.read("api", "current")),
         ...(o.tools ? await runTools(r, config.health) : {}),
+        ...(o.tools && config.health.pins.length
+          ? { behind: await pinsBehind(imports, config.health.pins) }
+          : {}),
       };
       const dir = resolve(r, config.out);
       await writeFile(resolve(dir, "health.current.json"), `${JSON.stringify(h, null, 2)}\n`);
@@ -388,7 +392,8 @@ export function program(): Command {
         console.log(
           `health: ${h.cycles.length} file cycles, ${h.flat.length} flat folders` +
             (h.duplicates ? `, ${h.duplicates.percent}% duplicated` : "") +
-            (h.unused ? `, ${h.unused.exports.length} unused exports` : ""),
+            (h.unused ? `, ${h.unused.exports.length} unused exports` : "") +
+            (h.behind ? `, ${h.behind.length} pins behind` : ""),
         );
     });
   p.command("packet")
