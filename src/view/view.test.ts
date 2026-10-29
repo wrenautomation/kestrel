@@ -284,7 +284,7 @@ describe("slices", () => {
     nodes,
     edges,
   });
-  const screen = (id: string, attrs = {}) => ({ id, role: "screen", group: "a", attrs });
+  const screen = (id: string, attrs = {}): Node => ({ id, role: "screen", group: "a", attrs });
   const ui = g(
     "ui",
     [

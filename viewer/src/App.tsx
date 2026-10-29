@@ -6,12 +6,14 @@ import { Detail } from "./Detail";
 import { foldNodes } from "./layout";
 import { Note } from "./Note";
 import { Search } from "./Search";
+import { Slice } from "./Slice";
 
 /**
  * `#f=<focus>&s=<selected>&d=<depth>&o=<id>&o=!<id>`: every view is a link, and a note carries
- * it. `o` is a box opened by hand; `!` is one folded by hand.
+ * it. `o` is a box opened by hand; `!` is one folded by hand. `m=1`: a screen on the map, not
+ * its slice.
  */
-function readHash(): { f?: string; s?: string; fold: Fold } {
+function readHash(): { f?: string; s?: string; fold: Fold; map: boolean } {
   const p = new URLSearchParams(location.hash.slice(1));
   const open: Record<string, boolean> = {};
   for (const o of p.getAll("o")) open[o.replace(/^!/, "")] = !o.startsWith("!");
@@ -19,6 +21,7 @@ function readHash(): { f?: string; s?: string; fold: Fold } {
     ...(p.get("f") ? { f: p.get("f") as string } : {}),
     ...(p.get("s") ? { s: p.get("s") as string } : {}),
     fold: { depth: Number(p.get("d")) || 0, open },
+    map: p.get("m") === "1",
   };
 }
 const SHUT: Fold = { depth: 0, open: {} };
@@ -31,6 +34,7 @@ export function App() {
   const [mark, setMark] = useState<string>();
   const [panel, setPanel] = useState<"search" | "note">();
   const [fold, setFold] = useState<Fold>(SHUT);
+  const [map, setMap] = useState(false);
 
   useEffect(() => {
     fetch("./data.json")
@@ -44,6 +48,7 @@ export function App() {
         setFocus(h.f && d.levels[h.f] ? h.f : (s?.parent ?? root));
         setSel(s?.id);
         setFold(h.fold);
+        setMap(h.map);
       })
       .catch((e: Error) => setError(e.message));
   }, []);
@@ -71,6 +76,7 @@ export function App() {
       else if (s?.parent) setFocus(s.parent);
       setSel(s?.id);
       setFold(h.fold);
+      setMap(h.map);
       setMark(undefined);
     };
     window.addEventListener("hashchange", on);
@@ -82,8 +88,9 @@ export function App() {
     const p = new URLSearchParams({ f: focus, ...(sel ? { s: sel } : {}) });
     if (fold.depth) p.set("d", String(fold.depth));
     for (const [id, on] of Object.entries(fold.open)) p.append("o", on ? id : `!${id}`);
+    if (map) p.set("m", "1");
     history.replaceState(null, "", `#${p}`);
-  }, [focus, sel, fold]);
+  }, [focus, sel, fold, map]);
 
   const tree = useMemo(() => (data && focus ? foldNodes(data, focus) : []), [data, focus]);
   const full = useMemo(() => fullDepth(tree), [tree]);
@@ -135,7 +142,8 @@ export function App() {
       } else if (e.key === "n") {
         e.preventDefault();
         setPanel("note");
-      } else if (e.key === "Enter" && sel) open(sel);
+      } else if (e.key === "m" && sel && data?.details[sel]?.slice) setMap((m) => !m);
+      else if (e.key === "Enter" && sel) open(sel);
       else if (e.key === " " && sel && data?.levels[sel]) {
         e.preventDefault();
         if (tree.some((n) => n.id === sel)) flip(sel, !openSet(tree, fold).has(sel));
@@ -158,6 +166,7 @@ export function App() {
   )
     trail.unshift(n);
   const shown = sel ?? focus;
+  const slice = !map && sel && data.details[sel]?.slice ? sel : undefined;
   const c = data.counts;
 
   return (
@@ -222,7 +231,21 @@ export function App() {
         </button>
       </header>
       <main className="body">
-        <Canvas data={data} focus={focus} fold={fold} sel={sel} onSelect={setSel} onToggle={flip} />
+        {slice ? (
+          <Slice data={data} id={slice} onGo={go} onMap={() => setMap(true)} />
+        ) : (
+          <Canvas
+            data={data}
+            focus={focus}
+            fold={fold}
+            sel={sel}
+            onSelect={(id) => {
+              setSel(id);
+              setMap(false);
+            }}
+            onToggle={flip}
+          />
+        )}
         <Detail data={data} id={shown} mark={mark} onGo={go} onOpen={open} />
       </main>
       {panel === "search" && (
