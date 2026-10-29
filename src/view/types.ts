@@ -42,6 +42,8 @@ export interface Item {
   sig: string;
   inferred?: boolean;
   drift?: Drift;
+  /** A route: the patterns it breaks. */
+  breaks?: string[];
 }
 
 export interface Service {
@@ -80,6 +82,8 @@ export interface Detail {
   cards: CardRef[];
   /** A screen's routes, tables and outside (view/slice.ts). */
   slice?: Slice;
+  /** A pattern: how many routes hold it, and each that breaks it. */
+  pattern?: { holds: number; breaks: { route: string; box?: string }[] };
   /** What it cost to run over `days`, from `kestrel cost`: its own lines only. */
   cost?: { usd: number; days: number; lines: { source: string; key: string; usd: number }[] };
 }

@@ -278,6 +278,57 @@ describe("buildView", () => {
   });
 });
 
+describe("patterns view", () => {
+  it("boxes each pattern with its breaks, and tags each route that breaks it", async () => {
+    const routes: Graph = {
+      layer: "routes",
+      nodes: [
+        {
+          id: "service:Pay",
+          role: "service",
+          group: "@s/a",
+          attrs: { file: "packages/a/src/x.ts", kind: "service" },
+        },
+        ...["charge", "list"].map(
+          (r): Node => ({
+            id: `route:Pay/${r}`,
+            role: "route",
+            parent: "service:Pay",
+            group: "@s/a",
+          }),
+        ),
+      ],
+      edges: [],
+    };
+    const patterns: Graph = {
+      layer: "patterns",
+      nodes: [{ id: "pattern:once", role: "pattern", group: "once", attrs: { card: "m/once.md" } }],
+      edges: [
+        { from: "pattern:once", to: "route:Pay/charge", kind: "breaks" },
+        { from: "pattern:once", to: "route:Pay/list", kind: "holds" },
+      ],
+    };
+    const v = await buildView({
+      root: "/r",
+      current: { imports: imports(), api, routes, patterns },
+      approved: {},
+      cards: [{ path: "m/once.md", type: "pattern", why: "One send.", stale: false, covers: [] }],
+    });
+    expect(v.nodes["pattern:once"]).toMatchObject({ parent: "pat:", sub: "1 hold · 1 break" });
+    const d = v.details["pattern:once"];
+    expect(d?.pattern).toEqual({
+      holds: 1,
+      breaks: [{ route: "route:Pay/charge", box: "@s/a/src/x.ts" }],
+    });
+    expect(d?.cards.map((c) => c.path)).toEqual(["m/once.md"]);
+    const svc = v.details["@s/a/src/x.ts"]?.services[0];
+    expect(svc?.routes.map((r) => [r.name, r.breaks ?? []])).toEqual([
+      ["charge", ["once"]],
+      ["list", []],
+    ]);
+  });
+});
+
 describe("slices", () => {
   const g = (layer: string, nodes: Graph["nodes"], edges: Graph["edges"]): Graph => ({
     layer,

@@ -1,7 +1,7 @@
 /**
  * Every layer's graph → one tree to zoom (repo → top folder → package → source folder → file,
- * repo → database → schema → table, repo → systems → system → part, and repo → screens → app →
- * screen), with each level's lines lifted to its kids. Exports and routes are not boxes: they sit in
+ * repo → database → schema → table, repo → systems → system → part, repo → screens → app →
+ * screen, and repo → patterns → pattern), with each level's lines lifted to its kids. Exports and routes are not boxes: they sit in
  * their file's detail, so a level stays a readable dependency graph. The page lays levels out.
  */
 import { basename } from "node:path";
@@ -354,6 +354,46 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     const s = n.role === "route" && n.parent ? services.get(n.parent) : undefined;
     if (s) routeBox.set(n.id, s.box);
   }
+  // The patterns: a box each; its detail lists the routes that break it, each route row the same.
+  const pats = input.current.patterns;
+  const PAT = "pat:";
+  const routeItem = new Map(
+    [...services.values()].flatMap(({ svc }) => svc.routes.map((r) => [r.id, r] as const)),
+  );
+  if (pats?.nodes.length) {
+    add({ id: PAT, label: "patterns", role: "patterns", parent: repo, kids: [], files: 0 });
+    for (const n of pats.nodes) {
+      const name = n.id.slice("pattern:".length);
+      const breaks = pats.edges.filter((e) => e.from === n.id && e.kind === "breaks");
+      const holds = pats.edges.filter((e) => e.from === n.id && e.kind === "holds").length;
+      add({
+        id: n.id,
+        label: name,
+        role: "pattern",
+        parent: PAT,
+        kids: [],
+        files: 0,
+        sub: `${holds} hold · ${breaks.length} break${breaks.length === 1 ? "" : "s"}`,
+      });
+      detail(n.id).attrs = n.attrs ?? {};
+      detail(n.id).pattern = {
+        holds,
+        breaks: breaks
+          .map((e) => {
+            const box = routeBox.get(e.to);
+            return box ? { route: e.to, box } : { route: e.to };
+          })
+          .sort((a, b) => (a.route < b.route ? -1 : 1)),
+      };
+      for (const e of breaks) {
+        const r = routeItem.get(e.to);
+        if (r) r.breaks = [...(r.breaks ?? []), name];
+      }
+      index.push({ name, kind: "pattern", box: n.id });
+    }
+    (nodes[PAT] as TreeNode).sub = many(pats.nodes.length, "pattern");
+  }
+
   for (const [id, sl] of slices(
     {
       ui: input.current.ui ?? null,
@@ -507,7 +547,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
         if (layer === "imports") return nearest(n.id);
         if (layer === "schema")
           return n.role === "index" ? n.parent : n.role === "migration" ? DB : n.id;
-        if (layer === "systems") return n.id;
+        if (layer === "systems" || layer === "patterns") return n.id;
         // A story marks its own file; a page or app that is gone marks the box above it.
         if (layer === "ui")
           return n.role === "story"
@@ -562,6 +602,7 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
   for (const c of input.cards ?? []) {
     const ref = { path: c.path, type: c.type, why: c.why, stale: c.stale };
     const boxes = new Set(c.covers.map((id) => (nodes[id] ? id : boxOf.get(id))).filter(Boolean));
+    for (const n of pats?.nodes ?? []) if (n.attrs?.card === c.path) boxes.add(n.id);
     for (const b of boxes as Set<string>) {
       detail(b).cards.push(ref);
       if (c.stale) (nodes[b] as TreeNode).badge = "stale";

@@ -64,6 +64,7 @@ const SHAPE: Record<string, Shape> = {
   folder: "stack",
   systems: "stack",
   screens: "stack",
+  patterns: "stack",
   service: "pill",
   db: "drum",
   schema: "drum",
@@ -186,6 +187,7 @@ const KIND_WORD: Record<string, string> = {
   db: "database",
   systems: "systems",
   screens: "screens",
+  patterns: "patterns",
 };
 const kindOf = (n: TreeNode) => n.kind ?? KIND_WORD[n.role] ?? n.role;
 /** No kicker when it only says the name again (systems, screens, database). */

@@ -98,6 +98,11 @@ function Row({ it, mark }: { it: Item; mark: string | undefined }) {
         <b>{it.name}</b> <span className="meta">{it.kind}</span>
         {it.inferred && <span className="tag warn">inferred</span>}
         {it.drift && <span className="tag">{it.drift === "add" ? "new" : "changed"}</span>}
+        {it.breaks?.map((b) => (
+          <span key={b} className="tag warn">
+            breaks {b}
+          </span>
+        ))}
       </div>
       {it.sig && <code>{it.sig}</code>}
     </li>
@@ -449,6 +454,30 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
             </section>
           )}
           <Services list={d.services} mark={mark} onGo={onGo} />
+          {d.pattern && (
+            <section>
+              <h3>
+                Breaks <span className="n">{d.pattern.breaks.length}</span>
+              </h3>
+              <p className="meta">
+                {d.pattern.holds} route{d.pattern.holds === 1 ? "" : "s"} hold it. An approved break
+                is an accepted exception; a new one is drift.
+              </p>
+              <ul className="links">
+                {d.pattern.breaks.map((b) => (
+                  <li key={b.route}>
+                    {b.box ? (
+                      <button type="button" onClick={() => onGo(b.box as string, b.route)}>
+                        {b.route.slice("route:".length)}
+                      </button>
+                    ) : (
+                      <code>{b.route}</code>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {d.screens?.length ? (
             <section>
               <h3>
