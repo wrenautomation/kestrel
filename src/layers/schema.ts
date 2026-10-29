@@ -13,6 +13,7 @@ import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { filesOf, WHOLE } from "../cache.js";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer, LayerContext } from "./layer.js";
 
@@ -150,6 +151,13 @@ async function extract(ctx: LayerContext): Promise<Graph> {
 
 export const schema: Layer = {
   id: "schema",
+  async sections({ root, config, env }) {
+    const cfg = config.layers.schema;
+    // A given database can change under us: no files say so.
+    if (!cfg?.migrations || env[cfg.urlEnv]) return null;
+    const files = await filesOf(root, [`${cfg.migrations}/**/*`, ...cfg.inputs]);
+    return [{ group: WHOLE, files }];
+  },
   extract,
   render: (group) => page(group),
 };

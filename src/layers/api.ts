@@ -7,7 +7,7 @@ import { relative } from "node:path";
 import { type ExportedDeclarations, SyntaxKind, Node as TsNode } from "ts-morph";
 import type { Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
-import { flat, packages, tsProject } from "./workspace.js";
+import { flat, packages, pkgSections, SOURCE, tsProject } from "./workspace.js";
 
 /** Where the code declares no type, the checker's text is cut here: Drizzle and zod types run to 30 kB. */
 const INFERRED_MAX = 300;
@@ -89,12 +89,20 @@ function signature(d: ExportedDeclarations): { kind: string; sig: string; inferr
   return out(d.getKindName(), "");
 }
 
+const apiPkgs = async (root: string, globs: string[]) =>
+  (await packages(root, globs)).filter((p) => Object.keys(p.entries).length);
+
 export const api: Layer = {
   id: "api",
-  async extract({ root, config }) {
+  async sections({ root, config }) {
     const opts = config.layers.api ?? { packages: ["packages/*"] };
-    const pkgs = (await packages(root, opts.packages)).filter((p) => Object.keys(p.entries).length);
-    const project = tsProject(root, pkgs);
+    return pkgSections(root, await apiPkgs(root, opts.packages), SOURCE);
+  },
+  async extract({ root, config }, only) {
+    const opts = config.layers.api ?? { packages: ["packages/*"] };
+    const all = await apiPkgs(root, opts.packages);
+    const project = tsProject(root, all);
+    const pkgs = only ? all.filter((p) => only.has(p.name)) : all;
     // One node per declaration a package gives out, however many entries reach it.
     const byId = new Map<string, Node & { attrs: { entries: string[] } }>();
     for (const p of pkgs) {

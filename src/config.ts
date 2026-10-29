@@ -39,6 +39,8 @@ const Schema = z.object({
   tbls: z.string().default("ghcr.io/k1low/tbls:v1.96.1"),
   /** Schemas to read; by default every one tbls finds, less `skip`. */
   schemas: z.array(z.string()).optional(),
+  /** Files the schema comes from, beyond the migrations folder: gen runs the layer when one changes. */
+  inputs: z.array(z.string()).default([]),
   /** The migrator's own bookkeeping, not the app's shape. */
   skip: z.array(z.string()).default(["drizzle"]),
 });
@@ -83,6 +85,8 @@ const Ui = z.object({
   stories: z
     .array(z.string())
     .default(["packages/*/src/**/*.stories.tsx", "apps/*/web/src/**/*.stories.tsx"]),
+  /** Files the dump reads: with them, gen runs the layer only when one changes (stories count too). */
+  inputs: z.array(z.string()).optional(),
 });
 
 const Health = z.object({

@@ -17,7 +17,7 @@ import {
 } from "ts-morph";
 import type { Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
-import { flat, packages, tsProject } from "./workspace.js";
+import { flat, packages, pkgSections, SOURCE, tsProject } from "./workspace.js";
 
 const REGISTER = /^(?:restate\.)?(service|object|workflow)$/;
 
@@ -67,7 +67,11 @@ function nameOf(call: CallExpression): string | undefined {
 
 export const routes: Layer = {
   id: "routes",
-  async extract({ root, config }) {
+  async sections({ root, config }) {
+    const opts = config.layers.routes ?? { packages: ["packages/*", "apps/*"] };
+    return pkgSections(root, await packages(root, opts.packages), SOURCE);
+  },
+  async extract({ root, config }, only) {
     const opts = config.layers.routes ?? { packages: ["packages/*", "apps/*"] };
     const pkgs = await packages(root, opts.packages);
     const project = tsProject(root, pkgs);
@@ -76,7 +80,7 @@ export const routes: Layer = {
     for (const file of project.getSourceFiles()) {
       const path = relative(root, file.getFilePath());
       const pkg = ownerOf(path);
-      if (!pkg) continue;
+      if (!pkg || (only && !only.has(pkg.name))) continue;
       for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression)) {
         const kind = REGISTER.exec(call.getExpression().getText())?.[1];
         const name = kind && nameOf(call);

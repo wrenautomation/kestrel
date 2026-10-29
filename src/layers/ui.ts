@@ -17,6 +17,7 @@ import { glob, readFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { filesOf, WHOLE } from "../cache.js";
 import type { Attr, Graph, Node } from "../graph.js";
 import type { Layer, LayerContext } from "./layer.js";
 
@@ -159,7 +160,16 @@ async function extract(ctx: LayerContext): Promise<Graph> {
   return fromDump(dump, stories);
 }
 
-export const ui: Layer = { id: "ui", extract, render: (group) => page(group) };
+export const ui: Layer = {
+  id: "ui",
+  async sections({ root, config }) {
+    const cfg = config.layers.ui;
+    if (!cfg?.inputs) return null;
+    return [{ group: WHOLE, files: await filesOf(root, [...cfg.inputs, ...cfg.stories]) }];
+  },
+  extract,
+  render: (group) => page(group),
+};
 
 /** One app: its pages in order, each with what it is for and where it is drawn. Or every story. */
 function page(g: Graph): Record<string, string> {

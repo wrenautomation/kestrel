@@ -12,7 +12,7 @@ import extractTSConfig from "dependency-cruiser/config-utl/extract-ts-config";
 import { Imports } from "../config.js";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
-import { headerLine, type Pkg, packages } from "./workspace.js";
+import { headerLine, type Pkg, packages, pkgSections } from "./workspace.js";
 
 interface CruiseModule {
   source: string;
@@ -34,9 +34,20 @@ const bare = (m: string) =>
 
 export const imports: Layer = {
   id: "imports",
-  async extract({ root, config }) {
+  async sections({ root, config }) {
+    const opts = config.layers.imports ?? Imports.parse({});
+    return pkgSections(
+      root,
+      await packages(root, opts.packages),
+      ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"],
+      opts.exclude.map((x) => new RegExp(x)),
+      "layout",
+    );
+  },
+  async extract({ root, config }, only) {
     const opts = config.layers.imports ?? Imports.parse({});
     const pkgs = await packages(root, opts.packages);
+    const mine = only ? pkgs.filter((p) => only.has(p.name)) : pkgs;
     const repo = `repo:${basename(root)}`;
     const ownerOf = (path: string) => pkgs.find((p) => path.startsWith(p.dir));
     const tsConfig = ["tsconfig.json", "tsconfig.base.json"].find((f) => existsSync(join(root, f)));
@@ -45,7 +56,7 @@ export const imports: Layer = {
     let modules: CruiseModule[];
     try {
       const r = await cruise(
-        pkgs.map((p) => p.dir.slice(0, -1)),
+        mine.map((p) => p.dir.slice(0, -1)),
         {
           outputType: "json",
           tsPreCompilationDeps: true,
@@ -72,7 +83,7 @@ export const imports: Layer = {
     const npm = new Map<string, Set<string>>();
     const crosses = new Map<string, boolean>(); // `from\0to` → every crossing is type-only
     const fileId = (p: Pkg, path: string) => `${p.name}/${relative(p.dir, path)}`;
-    for (const p of pkgs) {
+    for (const p of mine) {
       nodes.push({
         id: p.name,
         role: "package",
@@ -84,7 +95,7 @@ export const imports: Layer = {
     }
     for (const m of modules) {
       const from = ownerOf(m.source);
-      if (!from || m.source.includes("node_modules")) continue;
+      if (!from || !mine.includes(from) || m.source.includes("node_modules")) continue;
       const id = fileId(from, m.source);
       const line = headerLine(await readFile(join(root, m.source), "utf8").catch(() => ""));
       nodes.push({

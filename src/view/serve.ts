@@ -3,7 +3,7 @@
  * session through Devboard's `/api/notify` (the page's `n` key). Loopback only.
  */
 import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -24,8 +24,15 @@ export interface ServeOptions {
   data: () => Promise<unknown>;
 }
 
-export async function serve(opts: ServeOptions): Promise<string> {
+export interface Served {
+  url: string;
+  /** Drops the held data and tells open pages to fetch it again. */
+  changed(): void;
+}
+
+export async function serve(opts: ServeOptions & { live?: boolean }): Promise<Served> {
   let cached: Buffer | undefined;
+  const pages = new Set<ServerResponse>();
   const data = async () => {
     cached ??= gzipSync(JSON.stringify(await opts.data()));
     return cached;
@@ -38,6 +45,13 @@ export async function serve(opts: ServeOptions): Promise<string> {
         if (url.searchParams.has("fresh")) cached = undefined;
         res.writeHead(200, { "content-type": TYPES[".json"], "content-encoding": "gzip" });
         res.end(await data());
+        return;
+      }
+      if (url.pathname === "/events" && opts.live) {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+        res.write(": open\n\n");
+        pages.add(res);
+        req.on("close", () => pages.delete(res));
         return;
       }
       if (url.pathname === "/api/watchers") {
@@ -73,5 +87,11 @@ export async function serve(opts: ServeOptions): Promise<string> {
     server.listen(opts.port, "127.0.0.1", ok);
   });
   const addr = server.address();
-  return `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : opts.port}/`;
+  return {
+    url: `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : opts.port}/`,
+    changed() {
+      cached = undefined;
+      for (const p of pages) p.write("data: map\n\n");
+    },
+  };
 }

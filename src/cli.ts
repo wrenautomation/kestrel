@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * kestrel gen [layer...]      extract, write current + pages
+ * kestrel gen [layer...]      extract what changed (cache.ts), write current + pages; --fresh: all
+ * kestrel watch [layer...]    gen on every save from a warm project; --view serves the map live
  * kestrel check [layer...]    gen, then fail on drift vs approved
  * kestrel approve [layer...]  current → approved for the whole map (commit it: that is the approval)
  * kestrel stamp <card...>     mark cards read against the approved graph
@@ -16,6 +17,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Command } from "commander";
+import { cache, keysOf } from "./cache.js";
 import {
   checkCards,
   coveredBy,
@@ -35,14 +37,16 @@ import {
   partOwners,
 } from "./cost.js";
 import { diff, formatChanges } from "./diff.js";
-import { byGroup } from "./graph.js";
+import { byGroup, type Graph, merge, normalize } from "./graph.js";
 import { fromGraphs, page as healthPage, runTools } from "./health.js";
 import { LAYERS } from "./layers/index.js";
 import { seams } from "./layers/systems.js";
+import { packages, tsProject } from "./layers/workspace.js";
 import { packet } from "./packet.js";
 import { fileStore } from "./store.js";
 import { buildView } from "./view/build.js";
 import { serve } from "./view/serve.js";
+import { watch as watchFiles } from "./watch.js";
 
 export interface RunOptions {
   root: string;
@@ -55,28 +59,109 @@ export interface RunOptions {
 const chosen = (config: Config, asked: LayerId[]): LayerId[] =>
   asked.length ? asked : LAYER_IDS.filter((id) => config.layers[id]);
 
-export async function gen(opts: RunOptions): Promise<void> {
+export interface GenResult {
+  layer: LayerId;
+  /** Groups extracted again; `all` = the whole layer, 0 = cache hit. */
+  ran: number | "all";
+  nodes: number;
+  edges: number;
+  ms: number;
+}
+
+/** `fresh`: ignore the cache, extract every layer whole. */
+export async function gen(opts: RunOptions & { fresh?: boolean }): Promise<GenResult[]> {
   const config = await loadConfig(opts.root, opts.config);
   const store = fileStore(opts.root, config.out);
+  const memo = cache(opts.root);
+  const out: GenResult[] = [];
   for (const id of chosen(config, opts.layers)) {
     const layer = LAYERS[id];
-    const g = await layer.extract({
+    const t0 = Date.now();
+    const lap = (what: string) =>
+      process.env.KESTREL_TRACE && console.error(`  ${id} ${what} +${Date.now() - t0} ms`);
+    const ctx = {
       root: opts.root,
       config,
       env: process.env,
-      prior: (l) => store.read(l, "current"),
-    });
+      prior: (l: LayerId) => store.read(l, "current"),
+    };
+    const current = await store.read(id, "current");
+    const sections = layer.sections && !opts.fresh ? await layer.sections(ctx) : null;
+    const keys = sections?.length
+      ? await keysOf(
+          opts.root,
+          sections,
+          `${await codeOf(id)}\n${JSON.stringify(config.layers[id])}`,
+        )
+      : null;
+    const plan = keys ? await memo.plan(id, keys, current) : null;
+    lap("keys");
+    if (plan && current && plan.only?.size === 0 && !plan.gone.size) {
+      out.push({
+        layer: id,
+        ran: 0,
+        nodes: current.nodes.length,
+        edges: current.edges.length,
+        ms: Date.now() - t0,
+      });
+      continue;
+    }
+    const only = plan?.only && current ? plan.only : undefined;
+    const fresh =
+      only?.size === 0 ? { layer: id, nodes: [], edges: [] } : await layer.extract(ctx, only);
+    lap("extract");
+    const g =
+      only && current ? splice(current, fresh, new Set([...only, ...(plan?.gone ?? [])])) : fresh;
     await store.write(id, "current", g);
     const pages: Record<string, string> = {};
-    for (const part of byGroup(g).values()) Object.assign(pages, layer.render(part));
+    for (const part of byGroup(normalize(g)).values()) Object.assign(pages, layer.render(part));
     await store.writePages(id, pages);
-    console.log(`${id}: ${g.nodes.length} nodes, ${g.edges.length} edges`);
+    if (keys) await memo.save(id, keys, normalize(g));
+    out.push({
+      layer: id,
+      ran: only ? only.size : "all",
+      nodes: g.nodes.length,
+      edges: g.edges.length,
+      ms: Date.now() - t0,
+    });
   }
+  return out;
 }
+
+/** The layers that say their inputs: watch reruns only those unless told. */
+async function cached(root: string, config: Config, ids: LayerId[]): Promise<LayerId[]> {
+  const ctx = { root, config, env: process.env, prior: async () => null };
+  const out: LayerId[] = [];
+  for (const id of ids) if ((await LAYERS[id].sections?.(ctx))?.length) out.push(id);
+  return out;
+}
+
+/** The adapter's own code: a new kestrel build is a new key, whatever the version says. */
+const codeOf = async (id: LayerId) =>
+  (
+    await Promise.all(
+      [`./layers/${id}.js`, "./layers/workspace.js", "./graph.js"].map((f) =>
+        readFile(new URL(f, import.meta.url), "utf8").catch(() => f),
+      ),
+    )
+  ).join("\n");
+
+/** `was` with `redo` groups replaced by `fresh`; a group `fresh` also gives is replaced too. */
+function splice(was: Graph, fresh: Graph, redo: Set<string>): Graph {
+  for (const n of fresh.nodes) redo.add(n.group);
+  const keep = byGroup(was);
+  for (const g of redo) keep.delete(g);
+  return merge(was.layer, [...keep.values(), fresh]);
+}
+
+const line = (r: GenResult) =>
+  `${r.layer}: ${r.nodes} nodes, ${r.edges} edges` +
+  (r.ran === "all" ? "" : r.ran ? `, ${r.ran} groups again` : ", unchanged") +
+  `, ${r.ms} ms`;
 
 /** Exit code: 0 clean, 1 drift or nothing approved yet. */
 export async function check(opts: RunOptions): Promise<number> {
-  await gen(opts);
+  for (const r of await gen(opts)) console.log(line(r));
   const config = await loadConfig(opts.root, opts.config);
   const store = fileStore(opts.root, config.out);
   let code = 0;
@@ -248,7 +333,16 @@ export function program(): Command {
   p.command("gen")
     .argument("[layers...]")
     .description("write the current map and its pages")
-    .action(async (args: string[]) => gen({ root: root(), layers: layerArgs(args), ...cfg() }));
+    .option("--fresh", "ignore the cache: extract every layer whole")
+    .action(async (args: string[], o: { fresh?: boolean }) => {
+      for (const r of await gen({
+        root: root(),
+        layers: layerArgs(args),
+        fresh: o.fresh === true,
+        ...cfg(),
+      }))
+        console.log(line(r));
+    });
   p.command("check")
     .argument("[layers...]")
     .description("gen, then fail on drift from the approved map")
@@ -337,12 +431,61 @@ export function program(): Command {
         await writeFile(o.dump, JSON.stringify(await viewData(r, cfg().config)));
         return;
       }
-      const url = await serve({
+      const { url } = await serve({
         port: Number(o.port),
         devboard: o.devboard,
         data: () => viewData(r, cfg().config),
       });
       console.log(`kestrel view: ${url}  (Ctrl-C stops it)`);
+    });
+  p.command("watch")
+    .argument("[layers...]")
+    .description("gen on every save, from a warm project; --view serves the map live")
+    .option("--view", "also serve the map; open pages reload after each run")
+    .option("-p, --port <n>", "port for --view", "4610")
+    .option("--devboard <url>", "Devboard canvas server, for notes", "http://127.0.0.1:3100")
+    .action(async (args: string[], o: { view?: boolean; port: string; devboard: string }) => {
+      const r = root();
+      const config = await loadConfig(r, cfg().config);
+      // A layer with no inputs runs whole: on every save only if named.
+      const asked = layerArgs(args);
+      const ids = asked.length ? asked : await cached(r, config, chosen(config, []));
+      const once = async () => {
+        const t = Date.now();
+        const rs = await gen({ root: r, layers: ids, ...cfg() });
+        const moved = rs.filter((x) => x.ran !== 0);
+        console.log(
+          `${new Date().toTimeString().slice(0, 8)} ${Date.now() - t} ms` +
+            (moved.length ? `: ${moved.map(line).join("; ")}` : ": no change"),
+        );
+        return moved.length > 0;
+      };
+      await once();
+      // Parse and bind now, so the first save pays only for what it changed.
+      if (ids.includes("api") || ids.includes("routes")) {
+        const globs = [config.layers.api?.packages, config.layers.routes?.packages].flatMap(
+          (g) => g ?? [],
+        );
+        tsProject(r, await packages(r, globs)).getTypeChecker();
+      }
+      const live = o.view
+        ? await serve({
+            port: Number(o.port),
+            devboard: o.devboard,
+            data: () => viewData(r, cfg().config),
+            live: true,
+          })
+        : undefined;
+      watchFiles({
+        root: r,
+        ignore: [`${config.out}/`],
+        run: async () => {
+          if ((await once()) && live) live.changed();
+        },
+      });
+      console.log(
+        `kestrel watch: ${ids.join(", ")}${live ? `, map at ${live.url}` : ""}  (Ctrl-C stops it)`,
+      );
     });
   return p;
 }

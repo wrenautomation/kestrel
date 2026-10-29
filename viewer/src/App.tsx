@@ -48,6 +48,19 @@ export function App() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  // `kestrel watch --view`: a new map after each save; focus and selection stay.
+  useEffect(() => {
+    const es = new EventSource("./events");
+    es.onmessage = () =>
+      fetch("./data.json")
+        .then((r) => r.json())
+        .then((d: ViewData) => setData(d))
+        .catch(() => {});
+    // Plain `kestrel view` has no stream: stop, never retry.
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, []);
+
   // A pasted or edited link moves the view; our own replaceState fires no hashchange.
   useEffect(() => {
     if (!data) return;
