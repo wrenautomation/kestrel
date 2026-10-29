@@ -3,6 +3,8 @@
  * registered, not exported, so `api` misses them. Read with ts-morph from the registration call:
  * `restate.service|object|workflow({ name, handlers: { h: wrap({...}, (ctx, req: In): Promise<Out>) } })`,
  * or a repo's own wrapper of it called the same way (`portalService({ name, handlers })`).
+ * A spread in `handlers` (`...viewAsHandlers(api)`) is read through: the object a const holds or
+ * a function returns.
  * Nodes: `service`, and a `route` per handler (attrs: input and output type text). Edges: none
  * yet; calls between services are the `systems` layer's.
  */
@@ -13,6 +15,8 @@ import {
   type Expression,
   type FunctionDeclaration,
   type FunctionExpression,
+  type ObjectLiteralElementLike,
+  type ObjectLiteralExpression,
   SyntaxKind,
   Node as TsNode,
 } from "ts-morph";
@@ -49,6 +53,50 @@ function io(fn: Fn): { input: string; output: string } {
   const input = p ? flat(p.getTypeNode()?.getText() ?? p.getType().getText(p)) : "void";
   const output = flat(unwrap(fn.getReturnTypeNode()?.getText() ?? fn.getReturnType().getText(fn)));
   return { input, output };
+}
+
+/** The object literal an expression gives: itself, a const's value, or what a called function returns. */
+function literalOf(e: TsNode | undefined, depth = 0): ObjectLiteralExpression | undefined {
+  if (!e || depth > 4) return undefined;
+  if (TsNode.isObjectLiteralExpression(e)) return e;
+  if (
+    TsNode.isParenthesizedExpression(e) ||
+    TsNode.isAsExpression(e) ||
+    TsNode.isSatisfiesExpression(e)
+  )
+    return literalOf(e.getExpression(), depth + 1);
+  const target = TsNode.isCallExpression(e) ? e.getExpression() : e;
+  const sym = target.getSymbol();
+  // an imported name: its own declaration, in the file it comes from
+  const d = (sym?.isAlias() ? sym.getAliasedSymbol() : sym)?.getDeclarations()[0];
+  if (!d) return undefined;
+  if (TsNode.isVariableDeclaration(d)) {
+    const init = d.getInitializer();
+    if (!TsNode.isCallExpression(e)) return literalOf(init, depth + 1);
+    if (init && (TsNode.isArrowFunction(init) || TsNode.isFunctionExpression(init)))
+      return returned(init, depth);
+    return undefined;
+  }
+  if (TsNode.isCallExpression(e) && TsNode.isFunctionDeclaration(d)) return returned(d, depth);
+  return undefined;
+}
+
+function returned(fn: Fn, depth: number): ObjectLiteralExpression | undefined {
+  const body = fn.getBody();
+  if (body && !TsNode.isBlock(body)) return literalOf(body, depth + 1);
+  const ret = body
+    ?.getDescendantsOfKind(SyntaxKind.ReturnStatement)
+    .find((r) => r.getFirstAncestorByKind(SyntaxKind.Block) === body);
+  return literalOf(ret?.getExpression(), depth + 1);
+}
+
+/** An object's members, spreads read through (see the header). */
+function members(obj: ObjectLiteralExpression, depth = 0): ObjectLiteralElementLike[] {
+  return obj.getProperties().flatMap((p) => {
+    if (!TsNode.isSpreadAssignment(p)) return [p];
+    const inner = depth < 4 ? literalOf(p.getExpression()) : undefined;
+    return inner ? members(inner, depth + 1) : [];
+  });
 }
 
 const prop = (obj: TsNode, name: string) =>
@@ -114,7 +162,7 @@ export const routes: Layer = {
         const obj =
           handlers && TsNode.isPropertyAssignment(handlers) ? handlers.getInitializer() : undefined;
         if (!obj || !TsNode.isObjectLiteralExpression(obj)) continue;
-        for (const h of obj.getProperties()) {
+        for (const h of members(obj)) {
           if (
             !(
               TsNode.isPropertyAssignment(h) ||

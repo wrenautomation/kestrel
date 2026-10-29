@@ -8,7 +8,7 @@ import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { seams, systems } from "./systems.js";
-import { readStory } from "./ui.js";
+import { readStory, screenCalls } from "./ui.js";
 import { headerLine } from "./workspace.js";
 
 const FILES: Record<string, string> = {
@@ -26,8 +26,11 @@ export const inferred = () => ({ n: 1 });
 export * from "./more.js";
 `,
   "packages/a/src/more.ts": "export type Mode = 'a' | 'b';\n",
+  "packages/a/src/far.ts":
+    "export const far = () => ({ away: async (ctx: unknown): Promise<string> => 'x' });\n",
   "packages/a/src/restate.ts": `
 declare const restate: any; declare const serviceHandler: any; declare const portalService: any;
+import { far } from "./far.js";
 interface In { id: string } interface Out { ok: boolean }
 const NAME = "Mail";
 export const svc = restate.service({
@@ -40,8 +43,17 @@ export const svc = restate.service({
 export const acct = portalService({
   name: "Accounts",
   main: 1,
-  handlers: { list: serviceHandler({}, async (ctx: unknown, req: In): Promise<Out> => ({ ok: !!req })) },
+  handlers: {
+    list: serviceHandler({}, async (ctx: unknown, req: In): Promise<Out> => ({ ok: !!req })),
+    ...more(),
+    ...MORE,
+    ...far(),
+  },
 });
+function more() {
+  return { pick: async (ctx: unknown, req: In): Promise<Out> => ({ ok: !!req }) };
+}
+const MORE = { drop: async (ctx: unknown): Promise<string> => "x" };
 export const notOne = make({ name: "x", handlers: 1 });
 declare function make(o: unknown): unknown;
 `,
@@ -102,6 +114,10 @@ describe("routes", () => {
       via: "portalService",
     });
     expect(byId["route:Accounts/list"]?.attrs).toMatchObject({ input: "In", output: "Out" });
+    // spread handlers: a function's returned object, a const's
+    expect(byId["route:Accounts/pick"]?.attrs).toMatchObject({ input: "In", output: "Out" });
+    expect(byId["route:Accounts/away"]).toBeDefined();
+    expect(byId["route:Accounts/drop"]?.attrs).toMatchObject({ input: "void", output: "string" });
     expect(byId["service:x"]).toBeUndefined();
   });
 });
@@ -300,6 +316,67 @@ export const One = { args: { id: "n1" } };
     expect(readStory(root, "app/src/bare.stories.tsx", "export default {};\n")).toMatchObject({
       id: "bare",
       title: "bare",
+    });
+  });
+});
+
+describe("screenCalls", () => {
+  const routes: Graph = {
+    layer: "routes",
+    nodes: [
+      { id: "service:Accounts", role: "service", group: "a" },
+      { id: "route:Accounts/list", role: "route", parent: "service:Accounts", group: "a" },
+      { id: "service:Accounts@t.ts", role: "service", group: "a" },
+      {
+        id: "route:Accounts@t.ts/list",
+        role: "route",
+        parent: "service:Accounts@t.ts",
+        group: "a",
+      },
+      { id: "service:Files", role: "service", group: "a" },
+      { id: "route:Files/upload", role: "route", parent: "service:Files", group: "a" },
+    ],
+    edges: [],
+  };
+  // four screen files, all on the api client (shell); a hook only one reaches
+  const reach: Record<string, string[]> = {
+    "s1.tsx": ["s1.tsx", "api.ts", "hook.ts"],
+    "s2.tsx": ["s2.tsx", "api.ts"],
+    "s3.tsx": ["s3.tsx", "api.ts"],
+    "s4.tsx": ["s4.tsx", "api.ts"],
+  };
+  const text: Record<string, string> = {
+    "api.ts": 'export const up = () => call("files/upload", {});',
+    "hook.ts": 'call<{ rows: Row[] }>("accounts/list")',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a built path, not a literal
+    "s1.tsx": 'post("accounts/gone"); call(`x/${y}`); other("accounts/list")',
+    "s2.tsx": 'call("accounts/list"); call("accounts/list")',
+    "s3.tsx": 'callAsMe<Omit<A, "b">>(\n  "nope/list")',
+  };
+  const out = screenCalls({
+    screens: [
+      { id: "ui:a/one", file: "s1.tsx" },
+      { id: "ui:a/two", file: "s2.tsx" },
+      { id: "ui:a/three", file: "s3.tsx" },
+      { id: "ui:a/four", file: "s4.tsx" },
+      { id: "ui:a/lost", file: "none.tsx" },
+    ],
+    reach: (f) => (reach[f] ? new Set(reach[f]) : undefined),
+    text: (f) => text[f] ?? "",
+    api: { accounts: "Accounts", files: "Files" },
+    routes,
+    fns: ["call", "callAsMe", "post"],
+  });
+  it("links a screen to the routes its files call, the plain service first", () => {
+    expect(out.edges).toEqual([
+      { from: "ui:a/one", to: "route:Accounts/list", kind: "calls", attrs: { at: ["hook.ts"] } },
+      { from: "ui:a/two", to: "route:Accounts/list", kind: "calls", attrs: { at: ["s2.tsx"] } },
+    ]);
+  });
+  it("leaves out shell calls and lists literals no route matches", () => {
+    expect(Object.fromEntries(out.lost)).toEqual({
+      "ui:a/one": { missing: ["accounts/gone"] },
+      "ui:a/three": { host: ["nope/list"] },
     });
   });
 });

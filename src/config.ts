@@ -87,6 +87,8 @@ const Ui = z.object({
     .default(["packages/*/src/**/*.stories.tsx", "apps/*/web/src/**/*.stories.tsx"]),
   /** Files the dump reads, over the ones the dump names (layers/ui.ts); stories count too. */
   inputs: z.array(z.string()).optional(),
+  /** The web's api client functions: `<fn>("<service>/<route>")` is a screen's call (layers/ui.ts). */
+  calls: z.array(z.string()).default(["call"]),
 });
 
 const Health = z.object({

@@ -22,6 +22,7 @@ import { isMap, isScalar, parseDocument } from "yaml";
 import { filesOf, WHOLE } from "../cache.js";
 import type { SystemsConfig } from "../config.js";
 import type { Attr, Edge, Graph, Node } from "../graph.js";
+import { paths, reach } from "./files.js";
 import type { Layer, LayerContext } from "./layer.js";
 import { sentence } from "./workspace.js";
 
@@ -252,36 +253,6 @@ async function tagged(
 }
 
 /** File node id ↔ repo path, from the imports graph's package dirs. */
-function paths(imports: Graph) {
-  const dir = new Map<string, string>();
-  for (const n of imports.nodes)
-    if (n.role === "package" && typeof n.attrs?.dir === "string") dir.set(n.id, n.attrs.dir);
-  const pathOf = new Map<string, string>();
-  for (const n of imports.nodes) {
-    const d = n.parent ? dir.get(n.parent) : undefined;
-    if (n.role === "file" && n.parent && d !== undefined)
-      pathOf.set(n.id, join(d, n.id.slice(n.parent.length + 1)));
-  }
-  return { pathOf, idOf: new Map([...pathOf].map(([id, p]) => [p, id])) };
-}
-
-/** Files reached from `entry` over runtime imports. */
-function bundle(imports: Graph, entry: string): Set<string> {
-  const next = new Map<string, string[]>();
-  for (const e of imports.edges)
-    if (e.kind === "imports" && !e.attrs?.type)
-      next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
-  const seen = new Set<string>();
-  const stack = [entry];
-  while (stack.length) {
-    const id = stack.pop() as string;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    stack.push(...(next.get(id) ?? []));
-  }
-  return seen;
-}
-
 const IMPORT =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"'.][^"']*)["']/gm;
 
@@ -304,6 +275,7 @@ export function factLinks(
   skip: ReadonlySet<string> = new Set(),
 ): Link[] {
   const { pathOf, idOf } = paths(imports);
+  const bundle = reach(imports);
   const envs = Object.entries(facts.env).map(([env, to]) => {
     const alias = Object.entries(facts.aliases).find(([, v]) => v === env)?.[0];
     return { env, to, re: new RegExp(`\\b${env}\\b${alias ? `|\\b${alias}\\b` : ""}`) };
@@ -313,7 +285,7 @@ export function factLinks(
   for (const u of units) {
     const id = u.entry && idOf.get(u.entry);
     if (!id) continue;
-    for (const f of [...bundle(imports, id)].sort()) {
+    for (const f of [...bundle(id)].sort()) {
       const path = pathOf.get(f);
       if (!path || skip.has(path)) continue;
       const src = text(path);
@@ -340,6 +312,7 @@ export function restateLinks(
   restate: string,
 ): Link[] {
   const { idOf } = paths(imports);
+  const bundle = reach(imports);
   const defined = (routes?.nodes ?? []).flatMap((n) => {
     const id = n.role === "service" ? idOf.get(String(n.attrs?.file)) : undefined;
     return id ? [id] : [];
@@ -348,7 +321,7 @@ export function restateLinks(
   for (const u of units) {
     const id = u.entry && idOf.get(u.entry);
     if (!id || u.key === restate) continue;
-    const b = bundle(imports, id);
+    const b = bundle(id);
     const n = defined.filter((f) => b.has(f)).length;
     if (n)
       out.push({
