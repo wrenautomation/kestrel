@@ -60,16 +60,42 @@ export function boxSize(n: TreeNode, fanIn: number, top = 0): Size {
 export const ZONE: Pad = { top: 76, side: 22, bottom: 22 };
 
 /** The largest label font (px) that fits its box in up to 3 rows: zoomed-out labels grow to it, no further.
- * `far`: kicker and stats hidden, the box padding cut to FAR_PAD, so the label takes the whole box. */
-export function labelFit(n: TreeNode, w: number, h: number, top = 0, far = false): number {
-  const at = width(n.label, LABEL.font);
+ * `far`: kicker and stats hidden, the box padding cut to FAR_PAD, so the label takes the whole box;
+ * a `stem` goes on its own row at STEM size, and only the rest of the label grows. */
+export function labelFit(
+  n: TreeNode,
+  w: number,
+  h: number,
+  top = 0,
+  far = false,
+  stem = "",
+): number {
+  const rest = far && stem ? n.label.slice(stem.length) : n.label;
+  const at = width(rest, LABEL.font);
   const pad = far ? { x: 2 * FAR_PAD.x, y: 2 * FAR_PAD.y } : PAD;
   const iw = (w - STACK - pad.x) * 0.92;
   const ih = h - STACK - pad.y - top;
+  const extra = far && stem ? STEM : 0;
+  const cap = extra ? (13.5 * iw) / (width(stem, LABEL.font) * STEM) : Infinity;
   let best = 0;
   for (let r = 1; r <= 3; r++)
-    best = Math.max(best, Math.min((13.5 * r * iw) / at, ih / (r * 1.25)));
+    best = Math.max(best, Math.min((13.5 * r * iw) / at, ih / ((r + extra) * 1.25), cap));
   return Math.round(Math.max(13.5, best) * 10) / 10;
+}
+
+/** A far stem's size, as a share of the label's (style.css `.far .stem`). */
+export const STEM = 0.5;
+
+/** The longest prefix, cut after - . / _, that `label` shares with a sibling: `channel-` of
+ * `channel-reddit` beside `channel-x`. Far, it shrinks to its own row, so the part that tells
+ * siblings apart reads large. */
+export function stemOf(label: string, siblings: readonly string[]): string {
+  let best = "";
+  for (const m of label.matchAll(/[-./_]/g)) {
+    const p = label.slice(0, m.index + 1);
+    if (p.length < label.length && siblings.some((s) => s !== label && s.startsWith(p))) best = p;
+  }
+  return best;
 }
 
 /** A closed box's padding when far (style.css `.far .box:not(.zoned)`). */

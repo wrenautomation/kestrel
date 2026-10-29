@@ -420,6 +420,13 @@ code {
 .far .box:not(.zoned) .label {
   font-size: min(max(13.5px, calc(11px / var(--z, 1))), var(--fit-far, 28px));
 }
+/* Far: a stem shared with siblings takes its own small row (size.ts STEM). */
+.far .box:not(.zoned) .stem {
+  display: block;
+  font-size: 0.5em;
+  font-weight: 600;
+  color: var(--ink-2);
+}
 /* A zone's title stays readable when the whole map fits: up to the header's height. */
 .box.zoned .label {
   font-size: clamp(16px, calc(13px / var(--z, 1)), 56px);

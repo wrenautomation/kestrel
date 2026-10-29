@@ -4,7 +4,9 @@
  * Screens come from the repo's own dump command (`dump` in kestrel.json, run in the repo root):
  * a router built from data reads wrong statically, so the repo prints what it registers. It
  * prints `{areas: {<who>: [{id, label, apps}]}, apps: [{id, name, blurb, file, pages: [{id,
- * label, about?, group?, hidden?, template, record?, file?}]}]}`, paths from the repo root.
+ * label, about?, group?, hidden?, template, record?, file?}]}], inputs?}`, paths from the repo root.
+ * `inputs`: every file the dump read. Kept in the cache, they key the next gen, so the layer
+ * reruns only when one changes; `inputs` in kestrel.json overrides them.
  * Stories are read statically from CSF files: the default export's `title` and `id`, and the
  * relative imports, which are the parts it shows (mocks and fixtures are not parts).
  * Nodes: `app` (`ui:<app>`), `screen` (`ui:<app>/<page>`, parent its app), `story`
@@ -13,7 +15,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { glob, readFile } from "node:fs/promises";
+import { glob, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -22,6 +24,9 @@ import type { Attr, Graph, Node } from "../graph.js";
 import type { Layer, LayerContext } from "./layer.js";
 
 const run = promisify(execFile);
+
+/** The files the last dump read (see the header). */
+const readOf = (root: string) => join(root, "node_modules/.cache/kestrel/ui.inputs.json");
 
 const Dump = z.object({
   areas: z.record(
@@ -54,6 +59,7 @@ const Dump = z.object({
       ),
     }),
   ),
+  inputs: z.array(z.string()).optional(),
 });
 export type Dump = z.infer<typeof Dump>;
 
@@ -151,6 +157,10 @@ async function extract(ctx: LayerContext): Promise<Graph> {
     maxBuffer: 64 * 1024 * 1024,
   });
   const dump = Dump.parse(JSON.parse(stdout));
+  if (dump.inputs) {
+    await mkdir(dirname(readOf(ctx.root)), { recursive: true });
+    await writeFile(readOf(ctx.root), JSON.stringify(dump.inputs));
+  } else await rm(readOf(ctx.root), { force: true });
   const stories: Story[] = [];
   for await (const f of glob(cfg.stories, { cwd: ctx.root })) {
     if (f.includes("node_modules")) continue;
@@ -164,8 +174,17 @@ export const ui: Layer = {
   id: "ui",
   async sections({ root, config }) {
     const cfg = config.layers.ui;
-    if (!cfg?.inputs) return null;
-    return [{ group: WHOLE, files: await filesOf(root, [...cfg.inputs, ...cfg.stories]) }];
+    if (!cfg) return null;
+    const read = cfg.inputs
+      ? await filesOf(root, cfg.inputs)
+      : await readFile(readOf(root), "utf8").then(
+          (t) => JSON.parse(t) as string[],
+          () => null,
+        );
+    if (!read) return null;
+    return [
+      { group: WHOLE, files: [...new Set([...read, ...(await filesOf(root, cfg.stories))])] },
+    ];
   },
   extract,
   render: (group) => page(group),

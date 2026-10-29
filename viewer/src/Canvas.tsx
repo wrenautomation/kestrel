@@ -18,7 +18,7 @@ import rough from "roughjs";
 import type { Drawable, Options } from "roughjs/bin/core";
 import type { TreeNode, ViewData } from "../../src/view/types";
 import { type Shown, shown } from "./layout";
-import { labelFit, STACK, ZONE } from "./size";
+import { labelFit, STACK, stemOf, ZONE } from "./size";
 
 type BoxData = {
   n: TreeNode;
@@ -28,6 +28,8 @@ type BoxData = {
   /** Has kids: a tab opens it in place. */
   folds: boolean;
   fanIn: number;
+  /** The label's prefix shared with a sibling (size.ts stemOf). */
+  stem: string;
   selected: boolean;
   dim: boolean;
   onToggle(id: string, on: boolean): void;
@@ -177,16 +179,25 @@ const kickOf = (n: TreeNode) => {
   return k === n.label.replace(/\/$/, "").toLowerCase() ? undefined : k;
 };
 
-/** Break after - . / only, never inside a word. */
-const Label = ({ text }: { text: string }) => (
+/** Break after - . / only, never inside a word. The stem gets its own row when far. */
+const Label = ({ text, stem }: { text: string; stem: string }) => (
   <span className="label">
-    {text.split(/(?<=[-./_])/).map((part, i) => (
-      // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed label
-      <span key={i}>
-        {part}
+    {stem && (
+      <span className="stem">
+        {stem}
         <wbr />
       </span>
-    ))}
+    )}
+    {text
+      .slice(stem.length)
+      .split(/(?<=[-./_])/)
+      .map((part, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed label
+        <span key={i}>
+          {part}
+          <wbr />
+        </span>
+      ))}
   </span>
 );
 
@@ -215,7 +226,7 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
           ? {}
           : ({
               "--fit": `${labelFit(n, w, h, shape === "drum" ? 16 : 0)}px`,
-              "--fit-far": `${labelFit(n, w, h, shape === "drum" ? 16 : 0, true)}px`,
+              "--fit-far": `${labelFit(n, w, h, shape === "drum" ? 16 : 0, true, data.stem)}px`,
             } as CSSProperties)),
       }}
       title={n.id}
@@ -234,7 +245,7 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
             )}
           </span>
         )}
-        <Label text={n.label} />
+        <Label text={n.label} stem={open ? "" : data.stem} />
         {n.line && <span className="desc">{n.line}</span>}
         {!open && <span className="sub">{subOf(n, data.fanIn)}</span>}
       </div>
@@ -450,6 +461,10 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
             open: b.open,
             folds: !!data.levels[b.id],
             fanIn: fanIn.get(b.id) ?? 0,
+            stem: stemOf(
+              n.label,
+              (data.nodes[n.parent ?? ""]?.kids ?? []).map((k) => data.nodes[k]?.label ?? ""),
+            ),
             selected: b.id === sel,
             dim: !!sel && b.id !== sel && !near.has(b.id) && !b.open,
             onToggle,

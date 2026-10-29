@@ -19,6 +19,7 @@ import { basename, dirname, join, matchesGlob, resolve } from "node:path";
 import { parse as hcl } from "@cdktf/hcl2json";
 import { parse as toml } from "smol-toml";
 import { isMap, isScalar, parseDocument } from "yaml";
+import { filesOf, WHOLE } from "../cache.js";
 import type { SystemsConfig } from "../config.js";
 import type { Attr, Edge, Graph, Node } from "../graph.js";
 import type { Layer, LayerContext } from "./layer.js";
@@ -603,4 +604,37 @@ function page(g: Graph): Record<string, string> {
   return { [`${group}.md`]: L.join("\n") };
 }
 
-export const systems: Layer = { id: "systems", extract, render: page };
+export const systems: Layer = {
+  id: "systems",
+  async sections({ root, config, prior }) {
+    const cfg = config.layers.systems;
+    const imports = await prior("imports");
+    if (!cfg || !imports) return null;
+    // the bundled files' text, the deploy files, every repo's package.json; routes by content
+    const { pathOf } = paths(imports);
+    const pkgs = [".", ...Object.values(cfg.repos)].flatMap((d) => [
+      join(d, "package.json"),
+      ...cfg.packages.map((g) => join(d, g, "package.json")),
+    ]);
+    const globs = [
+      ...cfg.wrangler,
+      ...cfg.terraform,
+      ...cfg.compose,
+      ...cfg.tags,
+      ...Object.keys(cfg.hosts),
+      ...pkgs,
+    ];
+    const files = new Set([...(await filesOf(root, globs)), ...pathOf.values()]);
+    if (cfg.settings) files.add(cfg.settings.file);
+    const routes = await prior("routes");
+    return [
+      {
+        group: WHOLE,
+        files: [...files].sort(),
+        names: [JSON.stringify(imports.edges), routes ? JSON.stringify(routes) : ""],
+      },
+    ];
+  },
+  extract,
+  render: page,
+};

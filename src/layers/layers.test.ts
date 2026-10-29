@@ -243,6 +243,25 @@ describe("systems", () => {
       ["system:app.worker:web", "uses", "system:stripe", ["`stripe`"], [send]],
     ]);
     expect(await seams(root, g)).toEqual([]);
+    const [s] =
+      (await systems.sections?.({
+        root,
+        config,
+        env: {},
+        prior: async (l) => (l === "imports" ? imports : null),
+      })) ?? [];
+    expect(s?.files).toEqual([
+      "../mail/package.json",
+      "apps/web/package.json",
+      "apps/web/src/index.ts",
+      send,
+      "apps/web/wrangler.toml",
+      "config.ts",
+      "deploy/box-cache.sh",
+      "deploy/box-other.sh",
+      "deploy/main.tf",
+      "package.json",
+    ]);
     await rm(dirname(root), { recursive: true });
   }, 30_000);
 });

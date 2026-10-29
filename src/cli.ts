@@ -91,7 +91,7 @@ export async function gen(opts: RunOptions & { fresh?: boolean }): Promise<GenRe
       ? await keysOf(
           opts.root,
           sections,
-          `${await codeOf(id)}\n${JSON.stringify(config.layers[id])}`,
+          `${await codeOf(id)}\n${JSON.stringify(config.layers[id])}\n${await lockOf(opts.root)}`,
         )
       : null;
     const plan = keys ? await memo.plan(id, keys, current) : null;
@@ -135,6 +135,16 @@ async function cached(root: string, config: Config, ids: LayerId[]): Promise<Lay
   for (const id of ids) if ((await LAYERS[id].sections?.(ctx))?.length) out.push(id);
   return out;
 }
+
+/** The lockfile: a dependency's new version can change imports and types in every layer. */
+const lockOf = async (root: string) =>
+  (
+    await Promise.all(
+      ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock"].map((f) =>
+        readFile(resolve(root, f), "utf8").catch(() => ""),
+      ),
+    )
+  ).join("\0");
 
 /** The adapter's own code: a new kestrel build is a new key, whatever the version says. */
 const codeOf = async (id: LayerId) =>

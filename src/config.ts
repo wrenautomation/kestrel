@@ -85,7 +85,7 @@ const Ui = z.object({
   stories: z
     .array(z.string())
     .default(["packages/*/src/**/*.stories.tsx", "apps/*/web/src/**/*.stories.tsx"]),
-  /** Files the dump reads: with them, gen runs the layer only when one changes (stories count too). */
+  /** Files the dump reads, over the ones the dump names (layers/ui.ts); stories count too. */
   inputs: z.array(z.string()).optional(),
 });
 
