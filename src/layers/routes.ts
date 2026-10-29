@@ -1,7 +1,8 @@
 /**
  * What can be called from outside a process: Restate handlers and HTTP routes. They are
  * registered, not exported, so `api` misses them. Read with ts-morph from the registration call:
- * `restate.service|object|workflow({ name, handlers: { h: wrap({...}, (ctx, req: In): Promise<Out>) } })`.
+ * `restate.service|object|workflow({ name, handlers: { h: wrap({...}, (ctx, req: In): Promise<Out>) } })`,
+ * or a repo's own wrapper of it called the same way (`portalService({ name, handlers })`).
  * Nodes: `service`, and a `route` per handler (attrs: input and output type text). Edges: none
  * yet; calls between services are the `systems` layer's.
  */
@@ -53,16 +54,27 @@ function io(fn: Fn): { input: string; output: string } {
 const prop = (obj: TsNode, name: string) =>
   TsNode.isObjectLiteralExpression(obj) ? obj.getProperty(name) : undefined;
 
-/** A name may be a literal or a const; anything else shows as its source text. */
+/** A wrapper's call: one object with a `name` and a `handlers` object, as Restate's own takes. */
+function wrapped(call: CallExpression): boolean {
+  const arg = call.getArguments()[0];
+  const h = arg && prop(arg, "handlers");
+  return (
+    !!arg &&
+    !!prop(arg, "name") &&
+    !!h &&
+    TsNode.isPropertyAssignment(h) &&
+    TsNode.isObjectLiteralExpression(h.getInitializerOrThrow())
+  );
+}
+
+/** A literal, a const, or `SERVICE.name`: the checker gives the literal type. Any other name is a
+ * wrapper's own body (`name: o.name`); its callers are read as services. */
 function nameOf(call: CallExpression): string | undefined {
   const arg = call.getArguments()[0];
   const p = arg && prop(arg, "name");
   if (!p || !TsNode.isPropertyAssignment(p)) return undefined;
-  const v = p.getInitializerOrThrow();
-  // A literal, a const, or `SERVICE.name`: the checker gives the literal type.
-  const t = v.getType();
-  if (t.isStringLiteral()) return String(t.getLiteralValue());
-  return flat(v.getText());
+  const t = p.getInitializerOrThrow().getType();
+  return t.isStringLiteral() ? String(t.getLiteralValue()) : undefined;
 }
 
 export const routes: Layer = {
@@ -82,7 +94,9 @@ export const routes: Layer = {
       const pkg = ownerOf(path);
       if (!pkg || (only && !only.has(pkg.name))) continue;
       for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-        const kind = REGISTER.exec(call.getExpression().getText())?.[1];
+        const callee = call.getExpression().getText();
+        const own = REGISTER.exec(callee)?.[1];
+        const kind = own ?? (wrapped(call) ? "service" : undefined);
         const name = kind && nameOf(call);
         if (!kind || !name) continue;
         // A name used twice shows as two services, never one merged.
@@ -94,7 +108,7 @@ export const routes: Layer = {
           role: "service",
           parent: pkg.name,
           group: pkg.name,
-          attrs: { kind, file: path },
+          attrs: { kind, file: path, ...(own ? {} : { via: callee }) },
         });
         const handlers = prop(call.getArguments()[0] as TsNode, "handlers");
         const obj =
@@ -150,7 +164,7 @@ function page(g: Graph): Record<string, string> {
   const lines = [`# ${pkg}: routes`, "", `Services: ${services.length}.`, ""];
   for (const s of services) {
     lines.push(
-      `## ${s.id.slice("service:".length)} (${s.attrs?.kind})`,
+      `## ${s.id.slice("service:".length)} (${s.attrs?.kind}${s.attrs?.via ? ` via \`${s.attrs.via}\`` : ""})`,
       "",
       `File: ${s.attrs?.file}`,
       "",

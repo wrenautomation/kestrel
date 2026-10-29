@@ -27,7 +27,7 @@ export * from "./more.js";
 `,
   "packages/a/src/more.ts": "export type Mode = 'a' | 'b';\n",
   "packages/a/src/restate.ts": `
-declare const restate: any; declare const serviceHandler: any;
+declare const restate: any; declare const serviceHandler: any; declare const portalService: any;
 interface In { id: string } interface Out { ok: boolean }
 const NAME = "Mail";
 export const svc = restate.service({
@@ -37,6 +37,13 @@ export const svc = restate.service({
     ping: async (ctx: unknown): Promise<string> => "pong",
   },
 });
+export const acct = portalService({
+  name: "Accounts",
+  main: 1,
+  handlers: { list: serviceHandler({}, async (ctx: unknown, req: In): Promise<Out> => ({ ok: !!req })) },
+});
+export const notOne = make({ name: "x", handlers: 1 });
+declare function make(o: unknown): unknown;
 `,
 };
 
@@ -76,7 +83,7 @@ describe("api", () => {
 });
 
 describe("routes", () => {
-  it("reads the service name through a const and each handler's input and output", async () => {
+  it("reads the service name through a const, each handler's input and output, and a wrapper", async () => {
     const g = await routes.extract(ctx());
     const byId = Object.fromEntries(g.nodes.map((n) => [n.id, n]));
     expect(byId["service:Mail"]?.parent).toBe("@x/a");
@@ -90,6 +97,12 @@ describe("routes", () => {
       output: "string",
       wrap: "plain",
     });
+    expect(byId["service:Accounts"]?.attrs).toMatchObject({
+      kind: "service",
+      via: "portalService",
+    });
+    expect(byId["route:Accounts/list"]?.attrs).toMatchObject({ input: "In", output: "Out" });
+    expect(byId["service:x"]).toBeUndefined();
   });
 });
 
