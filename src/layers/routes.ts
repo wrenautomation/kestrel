@@ -5,8 +5,9 @@
  * or a repo's own wrapper of it called the same way (`portalService({ name, handlers })`).
  * A spread in `handlers` (`...viewAsHandlers(api)`) is read through: the object a const holds or
  * a function returns.
- * Nodes: `service`, and a `route` per handler (attrs: input and output type text). Edges: none
- * yet; calls between services are the `systems` layer's.
+ * Nodes: `service`, and a `route` per handler (attrs: input and output type text). Edges:
+ * route → table, `reads` or `writes` (./tables.ts), when the schema layer runs; calls between
+ * services are the `systems` layer's.
  */
 import { relative } from "node:path";
 import {
@@ -20,8 +21,9 @@ import {
   SyntaxKind,
   Node as TsNode,
 } from "ts-morph";
-import type { Graph, Node } from "../graph.js";
+import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
+import { tableReader } from "./tables.js";
 import { flat, packages, pkgSections, SOURCE, tsProject } from "./workspace.js";
 
 const REGISTER = /^(?:restate\.)?(service|object|workflow)$/;
@@ -99,6 +101,9 @@ function members(obj: ObjectLiteralExpression, depth = 0): ObjectLiteralElementL
   });
 }
 
+const tableIds = (schema: Graph | null) =>
+  (schema?.nodes ?? []).filter((n) => n.role === "table").map((n) => n.id);
+
 const prop = (obj: TsNode, name: string) =>
   TsNode.isObjectLiteralExpression(obj) ? obj.getProperty(name) : undefined;
 
@@ -127,16 +132,22 @@ function nameOf(call: CallExpression): string | undefined {
 
 export const routes: Layer = {
   id: "routes",
-  async sections({ root, config }) {
+  async sections({ root, config, prior }) {
     const opts = config.layers.routes ?? { packages: ["packages/*", "apps/*"] };
-    return pkgSections(root, await packages(root, opts.packages), SOURCE);
+    const sections = await pkgSections(root, await packages(root, opts.packages), SOURCE);
+    // table edges name the schema's tables
+    const tables = JSON.stringify(tableIds(await prior("schema")));
+    return sections.map((s) => ({ ...s, names: [...(s.names ?? []), tables] }));
   },
-  async extract({ root, config }, only) {
+  async extract({ root, config, prior }, only) {
     const opts = config.layers.routes ?? { packages: ["packages/*", "apps/*"] };
     const pkgs = await packages(root, opts.packages);
     const project = tsProject(root, pkgs);
     const ownerOf = (path: string) => pkgs.find((p) => path.startsWith(p.dir));
     const nodes: Node[] = [];
+    const edges: Edge[] = [];
+    const tables = tableIds(await prior("schema"));
+    const read = tables.length ? tableReader(project, new Set(tables)) : undefined;
     for (const file of project.getSourceFiles()) {
       const path = relative(root, file.getFilePath());
       const pkg = ownerOf(path);
@@ -189,17 +200,23 @@ export const routes: Layer = {
               : { input: "?", output: "?" };
           const wrap =
             value && TsNode.isCallExpression(value) ? value.getExpression().getText() : "plain";
+          const id = `route:${sid.slice("service:".length)}/${h.getName()}`;
           nodes.push({
-            id: `route:${sid.slice("service:".length)}/${h.getName()}`,
+            id,
             role: "route",
             parent: sid,
             group: pkg.name,
             attrs: { ...shape, wrap },
           });
+          // no inline function (`read(api.accounts)`): the walk starts at the value
+          const body = TsNode.isMethodDeclaration(h) ? h : (fn ?? value);
+          for (const [to, write] of body && read ? read(body) : [])
+            edges.push({ from: id, to, kind: write ? "writes" : "reads" });
         }
       }
     }
-    return { layer: "routes", nodes, edges: [] };
+    edges.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+    return { layer: "routes", nodes, edges };
   },
   render: (group) => page(group),
 };
@@ -220,8 +237,17 @@ function page(g: Graph): Record<string, string> {
     for (const r of g.nodes.filter((n) => n.parent === s.id)) {
       const name = r.id.slice(r.id.lastIndexOf("/") + 1);
       const tick = (x: unknown) => `\`${String(x).replace(/`/g, "'")}\``;
+      const touch = (kind: string) =>
+        g.edges.filter((e) => e.from === r.id && e.kind === kind).map((e) => e.to.slice(6));
+      const [w, rd] = [touch("writes"), touch("reads")];
+      const db = [
+        w.length ? `writes ${w.join(", ")}` : "",
+        rd.length ? `reads ${rd.join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("; ");
       lines.push(
-        `- **${name}** ${tick(r.attrs?.input)} → ${tick(r.attrs?.output)} (${r.attrs?.wrap})`,
+        `- **${name}** ${tick(r.attrs?.input)} → ${tick(r.attrs?.output)} (${r.attrs?.wrap})${db ? `: ${db}` : ""}`,
       );
     }
     lines.push("");

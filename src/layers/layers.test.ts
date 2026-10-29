@@ -26,6 +26,41 @@ export const inferred = () => ({ n: 1 });
 export * from "./more.js";
 `,
   "packages/a/src/more.ts": "export type Mode = 'a' | 'b';\n",
+  "packages/a/src/db.ts": `
+declare const pgTable: any; declare const pgSchema: any;
+export const leads = pgTable("leads", {});
+const auth = pgSchema("auth");
+export const users = auth.table("user", {});
+export const gone = pgTable("not_in_schema", {});
+`,
+  "packages/a/src/store.ts": `
+import { leads, users } from "./db.js";
+declare const db: any; declare const sql: any;
+export function store() {
+  return {
+    list: () => db.select().from(leads),
+    add: (id: string) => db.insert(leads).values({ id }),
+    who: () => db.execute(sql\`select * from auth."user" u join leads l on true where u.id = \${1}\`),
+    log: () => db.execute(sql\`insert into events (x) values (1)\`),
+  };
+}
+export const touch = () => users;
+`,
+  "packages/a/src/desk.ts": `
+declare const restate: any; declare function wrap(f: unknown): unknown;
+import { store, touch } from "./store.js";
+const api = store();
+export const desk = restate.service({
+  name: "Desk",
+  handlers: {
+    list: async (ctx: unknown) => api.list(),
+    add: async (ctx: unknown, id: string) => { await api.add(id); return api.list(); },
+    who: async (ctx: unknown) => api.who(),
+    log: async (ctx: unknown) => { api.log(); touch(); },
+    wrapped: wrap(api.add),
+  },
+});
+`,
   "packages/a/src/far.ts":
     "export const far = () => ({ away: async (ctx: unknown): Promise<string> => 'x' });\n",
   "packages/a/src/restate.ts": `
@@ -95,6 +130,29 @@ describe("api", () => {
 });
 
 describe("routes", () => {
+  it("links each handler to the tables it reaches: drizzle names and SQL text, reads and writes", async () => {
+    const schema: Graph = {
+      layer: "schema",
+      nodes: ["public.leads", "auth.user", "public.events"].map((t) => ({
+        id: `table:${t}`,
+        role: "table" as const,
+        group: "x",
+      })),
+      edges: [],
+    };
+    const g = await routes.extract({
+      ...ctx(),
+      prior: async (l) => (l === "schema" ? schema : null),
+    });
+    const of = (r: string) =>
+      g.edges.filter((e) => e.from === `route:Desk/${r}`).map((e) => `${e.kind} ${e.to}`);
+    expect(of("list")).toEqual(["reads table:public.leads"]);
+    expect(of("add")).toEqual(["writes table:public.leads"]);
+    expect(of("who")).toEqual(["reads table:auth.user", "reads table:public.leads"]);
+    expect(of("wrapped")).toEqual(["writes table:public.leads"]);
+    expect(of("log")).toEqual(["reads table:auth.user", "writes table:public.events"]);
+  });
+
   it("reads the service name through a const, each handler's input and output, and a wrapper", async () => {
     const g = await routes.extract(ctx());
     const byId = Object.fromEntries(g.nodes.map((n) => [n.id, n]));

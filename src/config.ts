@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-export const LAYER_IDS = ["imports", "api", "routes", "schema", "systems", "ui"] as const;
+/** Gen order: a layer reads only those before it (routes reads schema's tables). */
+export const LAYER_IDS = ["imports", "api", "schema", "routes", "systems", "ui"] as const;
 export type LayerId = (typeof LAYER_IDS)[number];
 
 export const Imports = z.object({
