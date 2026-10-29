@@ -34,6 +34,7 @@ export function App() {
   const [mark, setMark] = useState<string>();
   const [panel, setPanel] = useState<"search" | "note">();
   const [fold, setFold] = useState<Fold>(SHUT);
+  const [heat, setHeat] = useState(false);
   const [map, setMap] = useState(false);
 
   useEffect(() => {
@@ -147,7 +148,8 @@ export function App() {
       else if (e.key === " " && sel && data?.levels[sel]) {
         e.preventDefault();
         if (tree.some((n) => n.id === sel)) flip(sel, !openSet(tree, fold).has(sel));
-      } else if (e.key === "-") step(-1);
+      } else if (e.key === "h" && data?.recentDays) setHeat((h) => !h);
+      else if (e.key === "-") step(-1);
       else if (e.key === "=" || e.key === "+") step(1);
       else if (e.key === "Escape" || e.key === "Backspace" || e.key === "u") up();
     };
@@ -223,6 +225,17 @@ export function App() {
             </button>
           </fieldset>
         )}
+        {data.recentDays ? (
+          <button
+            type="button"
+            className="key"
+            aria-pressed={heat}
+            title={`Tint each box by its commits in the last ${data.recentDays} days`}
+            onClick={() => setHeat((h) => !h)}
+          >
+            <kbd>h</kbd> {heat ? `last ${data.recentDays} days` : "recent"}
+          </button>
+        ) : null}
         <button type="button" className="key" onClick={() => setPanel("search")}>
           <kbd>/</kbd> search
         </button>
@@ -244,6 +257,7 @@ export function App() {
               setMap(false);
             }}
             onToggle={flip}
+            heat={heat}
           />
         )}
         <Detail data={data} id={shown} mark={mark} onGo={go} onOpen={open} />

@@ -449,13 +449,20 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
       box: string | undefined,
       c: { commits: number; added: number; removed: number },
     ) => {
-      if (box && nodes[box])
-        detail(box).recent = {
-          days: rec.days,
-          commits: c.commits,
-          added: c.added,
-          removed: c.removed,
-        };
+      const n = box ? nodes[box] : undefined;
+      if (!box || !n) return;
+      n.commits = c.commits;
+      // up to the repo: a box's busiest child (a sum would count a commit once per file)
+      for (let p = n.parent; p && nodes[p] && nodes[p]?.role !== "repo"; p = nodes[p]?.parent) {
+        const up = nodes[p] as TreeNode;
+        up.commits = Math.max(up.commits ?? 0, c.commits);
+      }
+      detail(box).recent = {
+        days: rec.days,
+        commits: c.commits,
+        added: c.added,
+        removed: c.removed,
+      };
     };
     for (const p of rec.packages) put(p.id, p);
     for (const f of rec.files) {
@@ -698,5 +705,6 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     index,
     counts,
     ...(input.storybook ? { storybook: input.storybook, dirs } : {}),
+    ...(rec ? { recentDays: rec.days } : {}),
   };
 }

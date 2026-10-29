@@ -31,6 +31,8 @@ export interface TreeNode {
   removed?: string[];
   /** `none`: a required role with no card on it or under it. `stale`: a card on it is stale. */
   badge?: "none" | "stale";
+  /** Commits in `kestrel recent`'s window: a package's or file's own, a folder's busiest child's. */
+  commits?: number;
 }
 
 /** An export or a route, shown in its file's detail. */
@@ -201,6 +203,8 @@ export interface ViewData {
   storybook?: string;
   /** Package name → its repo dir (`apps/portal/`), longest dir first: a path to its file box. */
   dirs?: [string, string][];
+  /** `kestrel recent`'s window in days, when its report is in. */
+  recentDays?: number;
 }
 
 /** A card as the view shows it: `covers` are current node ids. */

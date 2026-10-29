@@ -72,6 +72,30 @@ describe("buildView", () => {
     expect(v.counts.files).toBe(4);
   });
 
+  it("carries recent commits up the tree: each box its busiest child's", async () => {
+    const v = await buildView({
+      root: "/r",
+      current: { imports: imports(), api },
+      approved: { imports: null, api: null },
+      recent: {
+        days: 14,
+        commits: 6,
+        packages: [{ id: "@s/a", commits: 5, files: 2, added: 9, removed: 1 }],
+        files: [
+          { path: "packages/a/src/deep/y.ts", commits: 4, added: 6, removed: 0 },
+          { path: "packages/a/src/x.ts", commits: 2, added: 3, removed: 1 },
+        ],
+      },
+    });
+    expect(v.recentDays).toBe(14);
+    expect(v.nodes["@s/a/src/deep/y.ts"]?.commits).toBe(4);
+    expect(v.nodes["folder:@s/a/deep"]?.commits).toBe(4);
+    expect(v.nodes["@s/a"]?.commits).toBe(5);
+    expect(v.nodes["dir:packages"]?.commits).toBe(5);
+    expect(v.nodes["repo:r"]?.commits).toBeUndefined();
+    expect(v.nodes["@s/b"]?.commits).toBeUndefined();
+  });
+
   it("lifts each import to the level where its ends part", async () => {
     const v = await view(imports());
     const at = (lvl: string) => v.levels[lvl]?.edges.map((e) => [e.from, e.to, e.n, e.type]) ?? [];

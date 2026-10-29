@@ -10,6 +10,8 @@
   --good: #17803d;
   --warn: #b7791f;
   --bad: #c31c15;
+  /* recent work; wren's --ui-chart-2, one value in both themes */
+  --hot: #d4592a;
   --l0: #6a5a93;
   --l1: #2f8a80;
   --l2: #c0567f;
@@ -194,6 +196,10 @@ code {
   font-size: 12.5px;
   padding: 4px 6px;
   border-radius: 7px;
+}
+.key[aria-pressed="true"] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--hot) 16%, transparent);
 }
 .key:hover {
   background: var(--fill);
@@ -453,6 +459,10 @@ code {
 }
 .picking .box:not(.lit, .zoned) {
   opacity: 0.38;
+}
+/* recent work: --hot into the paper, up to 40%; drift keeps the line */
+.box.heat {
+  --sk-fill: color-mix(in srgb, var(--hot) calc(var(--heat) * 40%), var(--paper));
 }
 .box.drift-change {
   --sk-line: var(--warn);

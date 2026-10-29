@@ -36,6 +36,8 @@ type BoxData = {
   selected: boolean;
   /** Selected or a neighbour: stays bright while `.picking` dims the rest. */
   lit: boolean;
+  /** 0–1: its recent commits against the busiest box in the frame; absent when heat is off. */
+  heat?: number;
   onToggle(id: string, on: boolean): void;
 };
 type LineData = {
@@ -229,6 +231,7 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
     n.drift ? `drift-${n.drift}` : "",
     data.selected ? "sel" : "",
     data.lit ? "lit" : "",
+    data.heat !== undefined ? "heat" : "",
   ].join(" ");
   return (
     <div
@@ -242,6 +245,7 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
         ...(open
           ? {}
           : ({ "--fit": `${data.fit}px`, "--fit-far": `${data.fitFar}px` } as CSSProperties)),
+        ...(data.heat !== undefined ? ({ "--heat": data.heat.toFixed(3) } as CSSProperties) : {}),
       }}
       title={n.id}
     >
@@ -347,6 +351,8 @@ interface Props {
   onSelect(id: string | undefined): void;
   /** Open or fold a box in place. */
   onToggle(id: string, on: boolean): void;
+  /** Tint each shut box by its recent commits. */
+  heat?: boolean;
 }
 
 /** A flat level fits no smaller than FIT_MIN, to keep labels readable; a frame with open boxes fits whole. */
@@ -357,7 +363,7 @@ const fitOf = (folded: boolean) => ({
 });
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
+export function Canvas({ data, focus, fold, sel, onSelect, onToggle, heat = false }: Props) {
   // The last laid-out frame stays until the next is ready.
   const [laid, setLaid] = useState<{ root: string; map: Shown }>();
   const rf = useRef<ReactFlowInstance<Node<BoxData>, Edge<LineData>>>(null);
@@ -459,6 +465,17 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
   // so a pick re-renders only the boxes it lights.
   const base = useMemo(() => {
     const sibs = new Map<string, string[]>();
+    // log scale from the frame's quietest shut box with commits to its busiest: a busy repo
+    // still shows where the work was; any commit gets a floor, none stays paper
+    const logs = heat
+      ? (map?.boxes ?? [])
+          .filter((b) => !b.open && (data.nodes[b.id]?.commits ?? 0) > 0)
+          .map((b) => Math.log(data.nodes[b.id]?.commits ?? 1))
+      : [];
+    const lo = Math.min(...logs);
+    const span = Math.max(...logs) - lo;
+    const heatOf = (c = 0) =>
+      c > 0 ? 0.15 + 0.85 * (span > 0 ? (Math.log(c) - lo) / span : 1) : 0;
     return (map?.boxes ?? []).map((b) => {
       const n = data.nodes[b.id] as TreeNode;
       const p = n.parent ?? "";
@@ -468,7 +485,7 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
         sibs.set(p, labels);
       }
       const stem = stemOf(n.label, labels);
-      const top = shapeOf(n) === "drum" ? 16 : 0;
+      const lidTop = shapeOf(n) === "drum" ? 16 : 0;
       return {
         b,
         data: {
@@ -479,13 +496,14 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
           folds: !!data.levels[b.id],
           fanIn: fanIn.get(b.id) ?? 0,
           stem,
-          fit: b.open ? 0 : labelFit(n, b.w, b.h, top),
-          fitFar: b.open ? 0 : labelFit(n, b.w, b.h, top, true, stem),
+          fit: b.open ? 0 : labelFit(n, b.w, b.h, lidTop),
+          fitFar: b.open ? 0 : labelFit(n, b.w, b.h, lidTop, true, stem),
+          ...(heat && !b.open ? { heat: heatOf(n.commits) } : {}),
           onToggle,
         },
       };
     });
-  }, [map, data, fanIn, onToggle]);
+  }, [map, data, fanIn, onToggle, heat]);
   const made = useRef(new WeakMap<object, Node<BoxData>>());
   const nodes = useMemo<Node<BoxData>[]>(
     () =>
