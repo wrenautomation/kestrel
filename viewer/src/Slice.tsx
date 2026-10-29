@@ -8,8 +8,14 @@ import type { SliceCall, SliceItem, ViewData } from "../../src/view/types";
  * With a Storybook and a page story, the screen runs live in a frame; the story's fake server
  * posts each call's key (`{kestrel: "call", key}`), and the calls that ran are marked. Alt+click
  * in it posts the parts under the click (`{kestrel: "source", chain}`, innermost first): they
- * list under the frame, the screen's own file marked, each a link to its file.
+ * list under the frame, the screen's own file marked, each a link to its file. Flow: the same
+ * posts in order, repeats kept, one row per call with what its route reaches, in lanes.
  */
+interface Step {
+  key: string;
+  at: number;
+}
+
 interface Props {
   data: ViewData;
   id: string;
@@ -233,17 +239,18 @@ export function Slice({ data, id, onGo, onMap }: Props) {
   // a call id, or an item id: what the hover keeps lit
   const [hot, setHot] = useState<{ call?: string; item?: SliceItem }>({});
   // call keys the live story sent, and the parts under the last Alt+click; reset per screen
-  const [ran, setRan] = useState<ReadonlySet<string>>(new Set());
+  const [log, setLog] = useState<readonly Step[]>([]);
   const [under, setUnder] = useState<string[]>([]);
   const [was, setWas] = useState(id);
   if (was !== id) {
     setWas(id);
-    setRan(new Set());
+    setLog([]);
     setUnder([]);
   }
   const onCall = useRef((key: string) =>
-    setRan((r) => (r.has(key) ? r : new Set([...r, key]))),
+    setLog((l) => [...l, { key, at: performance.now() }]),
   ).current;
+  const ran = new Set(log.map((s) => s.key));
   const onSource = useRef((chain: string[]) => setUnder(chain)).current;
   if (!n) return null;
   const live = data.storybook && sl?.stories?.length ? sl.stories : undefined;
@@ -387,6 +394,106 @@ export function Slice({ data, id, onGo, onMap }: Props) {
         />
         <Column title="Outside" list={sl?.outside ?? []} row={item} />
       </div>
+      {live && (
+        <Flow
+          log={log}
+          calls={sl?.calls ?? []}
+          items={[...(sl?.tables ?? []), ...(sl?.outside ?? [])]}
+          onGo={onGo}
+          onClear={() => setLog([])}
+        />
+      )}
     </div>
+  );
+}
+
+/** The live story's calls in order: time from the first, the route, then what it reaches. */
+function Flow({
+  log,
+  calls,
+  items,
+  onGo,
+  onClear,
+}: {
+  log: readonly Step[];
+  calls: readonly SliceCall[];
+  items: readonly SliceItem[];
+  onGo: Props["onGo"];
+  onClear: () => void;
+}) {
+  const byPath = new Map(calls.flatMap((c) => (c.path ? [[c.path, c] as const] : [])));
+  const t0 = log[0]?.at ?? 0;
+  // the same call again at once (a list's rows each asking) folds into one row
+  const rows: (Step & { n: number })[] = [];
+  for (const s of log) {
+    const last = rows.at(-1);
+    if (last?.key === s.key) last.n++;
+    else rows.push({ ...s, n: 1 });
+  }
+  const lane = (c: SliceCall | undefined, keep: (it: SliceItem) => boolean) =>
+    c ? items.filter((it) => it.via.includes(c.id) && keep(it)) : [];
+  const cell = (list: SliceItem[]) => (
+    <td>
+      {list.map((it) => (
+        <button type="button" key={it.id} disabled={!it.box} onClick={() => it.box && onGo(it.box)}>
+          {it.label}
+        </button>
+      ))}
+    </td>
+  );
+  return (
+    <section className="flow">
+      <h3>
+        Flow <span className="n">{log.length}</span>
+        <button type="button" className="key" onClick={onClear} disabled={!log.length}>
+          clear
+        </button>
+      </h3>
+      {log.length ? (
+        <div className="flow-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>ms</th>
+                <th>Call</th>
+                <th>Writes</th>
+                <th>Reads</th>
+                <th>Outside</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s, i) => {
+                const c = byPath.get(s.key);
+                return (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: a log row is its place in the log
+                  <tr key={i} className={c ? undefined : "lost"}>
+                    <td className="ms">{Math.round(s.at - t0)}</td>
+                    <td>
+                      {c ? (
+                        <button
+                          type="button"
+                          disabled={!c.box}
+                          onClick={() => c.box && onGo(c.box, c.id)}
+                        >
+                          {c.name}
+                        </button>
+                      ) : (
+                        <code>{s.key}</code>
+                      )}
+                      {s.n > 1 && <span className="meta"> ×{s.n}</span>}
+                    </td>
+                    {cell(lane(c, (it) => it.kind === "writes"))}
+                    {cell(lane(c, (it) => it.kind === "reads"))}
+                    {cell(lane(c, (it) => it.kind !== "reads" && it.kind !== "writes"))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="none">Use the screen: each call it makes adds a row here.</p>
+      )}
+    </section>
   );
 }

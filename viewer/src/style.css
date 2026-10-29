@@ -1158,6 +1158,8 @@ dialog::backdrop {
 }
 .col.screen .frame {
   position: relative;
+  /* a flex child: the column scrolls, the frame keeps its height */
+  flex-shrink: 0;
   height: min(62vh, 640px);
   overflow: hidden;
   border: 1px solid var(--hair);
@@ -1210,4 +1212,93 @@ dialog::backdrop {
 }
 .col ol.chain li.own {
   background: var(--tint);
+}
+
+/* flow: the live story's calls in order, one row per call, lanes for what each reaches */
+.slice.live {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.flow {
+  border-top: 1px solid var(--hair);
+  padding: 10px 20px 14px;
+  background: var(--canvas);
+}
+.flow h3 {
+  margin: 0 0 6px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.flow h3 .n {
+  font: 600 11px / 1 var(--mono);
+  letter-spacing: 0;
+  color: var(--accent);
+  background: var(--tint);
+  padding: 3px 6px;
+  border-radius: 99px;
+  font-variant-numeric: tabular-nums;
+}
+.flow h3 .key {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.flow-scroll {
+  max-height: 28vh;
+  overflow: auto;
+}
+.flow table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.flow th {
+  position: sticky;
+  top: 0;
+  background: var(--canvas);
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hair);
+}
+.flow td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: baseline;
+}
+.flow td button {
+  font: inherit;
+  padding: 0;
+  margin-right: 10px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+.flow td button:disabled {
+  cursor: default;
+  color: var(--ink-2);
+}
+.flow td.ms {
+  font: 11px var(--mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  width: 4em;
+}
+.flow tr.lost code {
+  color: var(--ink-3);
+}
+.flow .none {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.flow td code {
+  white-space: nowrap;
 }
