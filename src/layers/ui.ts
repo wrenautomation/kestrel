@@ -21,17 +21,23 @@
  * story's runtime call log will give the exact list. Screen attrs for literals no route matches:
  * `missing` (its service has no such route), `host` (its first part names no service: the host
  * answers it, or a typo).
+ * Edges `reads`: record screen → table. Each `<records>({id, view, activity?: {view}})` call in the
+ * packages (`layers.ui.records`) names a kind's views; the checker reads a const id. A view with
+ * no schema is `public`. A kind's `rows` function: the tables it reaches (./reach.ts).
  */
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { glob, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
+import { type Project, SyntaxKind, Node as TsNode } from "ts-morph";
 import { z } from "zod";
 import { filesOf, WHOLE } from "../cache.js";
 import type { Attr, Edge, Graph, Node } from "../graph.js";
 import { paths, reach } from "./files.js";
 import type { Layer, LayerContext } from "./layer.js";
+import { reader } from "./reach.js";
+import { packages, SOURCE, tsProject } from "./workspace.js";
 
 const run = promisify(execFile);
 
@@ -227,6 +233,63 @@ export function fromDump(
   return { layer: "ui", nodes, edges };
 }
 
+/** The repo source globs records are read from: the routes layer's packages. */
+async function sourceGlobs(root: string, globs: string[] | undefined) {
+  const pkgs = await packages(root, globs ?? ["packages/*", "apps/*"]);
+  return {
+    pkgs,
+    globs: pkgs.flatMap((p) => SOURCE.map((g) => (g.startsWith("!") ? g : `${p.dir}/${g}`))),
+  };
+}
+
+/** Record kind → the tables it reads (see the header). */
+export function recordTables(
+  project: Project,
+  fn: string,
+  tables: ReadonlySet<string>,
+): Map<string, string[]> {
+  const read = reader(project, tables);
+  const out = new Map<string, string[]>();
+  const at = (o: TsNode | undefined, key: string) => {
+    const p = o && TsNode.isObjectLiteralExpression(o) ? o.getProperty(key) : undefined;
+    if (p && TsNode.isPropertyAssignment(p)) return p.getInitializerOrThrow();
+    return p && TsNode.isMethodDeclaration(p) ? p : undefined;
+  };
+  const view = (v: TsNode | undefined) => {
+    const t = v?.getType();
+    if (!t?.isStringLiteral()) return [];
+    const name = String(t.getLiteralValue());
+    const id = `table:${name.includes(".") ? name : `public.${name}`}`;
+    return tables.has(id) ? [id] : [];
+  };
+  for (const f of project.getSourceFiles()) {
+    if (!f.getFullText().includes(`${fn}(`)) continue;
+    for (const c of f.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      if (c.getExpression().getText() !== fn) continue;
+      const arg = c.getArguments()[0];
+      const id = at(arg, "id")?.getType();
+      if (!id?.isStringLiteral()) continue;
+      const rows = at(arg, "rows");
+      const hit = new Set([
+        ...view(at(arg, "view")),
+        ...view(at(at(arg, "activity"), "view")),
+        ...(rows ? read(rows).tables.keys() : []),
+      ]);
+      if (hit.size) out.set(String(id.getLiteralValue()), [...hit].sort());
+    }
+  }
+  return out;
+}
+
+/** Record screen → table edges. */
+export function recordReads(nodes: readonly Node[], kinds: Map<string, string[]>): Edge[] {
+  return nodes.flatMap((n) => {
+    const kind = n.role === "screen" ? n.attrs?.record : undefined;
+    const to = typeof kind === "string" ? (kinds.get(kind) ?? []) : [];
+    return to.map((t) => ({ from: n.id, to: t, kind: "reads" }));
+  });
+}
+
 /** One CSF file: its meta's `title` and `id` (the file name when it has none), and its relative imports. */
 export function readStory(root: string, file: string, text: string): Story {
   // `export default meta;` names a const above it: read the meta from there.
@@ -268,7 +331,19 @@ async function extract(ctx: LayerContext): Promise<Graph> {
     stories.push(readStory(ctx.root, file, await readFile(join(ctx.root, file), "utf8")));
   }
   const imports = await ctx.prior("imports");
-  if (!imports) return fromDump(dump, stories);
+  const g = imports ? await withCalls(ctx, dump, stories, imports) : fromDump(dump, stories);
+  if (!cfg.records) return g;
+  const schema = await ctx.prior("schema");
+  const tables = new Set((schema?.nodes ?? []).filter((n) => n.role === "table").map((n) => n.id));
+  const { pkgs } = await sourceGlobs(ctx.root, ctx.config.layers.routes?.packages);
+  const kinds = recordTables(tsProject(ctx.root, pkgs), cfg.records, tables);
+  const edges = [...g.edges, ...recordReads(g.nodes, kinds)];
+  edges.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+  return { ...g, edges };
+}
+
+async function withCalls(ctx: LayerContext, dump: Dump, stories: Story[], imports: Graph) {
+  const cfg = ctx.config.layers.ui as NonNullable<LayerContext["config"]["layers"]["ui"]>;
   const { pathOf, idOf } = paths(imports);
   const from = reach(imports);
   return fromDump(dump, stories, {
@@ -288,6 +363,15 @@ async function extract(ctx: LayerContext): Promise<Graph> {
   });
 }
 
+/** Source files that call the records function. */
+async function recordFiles(root: string, globs: string[] | undefined, fn: string) {
+  const all = await filesOf(root, (await sourceGlobs(root, globs)).globs);
+  const has = await Promise.all(
+    all.map(async (f) => (await readFile(join(root, f), "utf8")).includes(`${fn}(`)),
+  );
+  return all.filter((_, i) => has[i]);
+}
+
 export const ui: Layer = {
   id: "ui",
   async sections({ root, config, prior }) {
@@ -300,15 +384,20 @@ export const ui: Layer = {
           () => null,
         );
     if (!read) return null;
-    // calls read the routes and the imports edges too
+    // calls read the routes and the imports edges too; records, their files and the tables
     const [imports, routes] = [await prior("imports"), await prior("routes")];
+    const schema = cfg.records ? await prior("schema") : null;
+    const declared = cfg.records
+      ? await recordFiles(root, config.layers.routes?.packages, cfg.records)
+      : [];
     return [
       {
         group: WHOLE,
-        files: [...new Set([...read, ...(await filesOf(root, cfg.stories))])],
+        files: [...new Set([...read, ...(await filesOf(root, cfg.stories)), ...declared])],
         names: [
           imports ? JSON.stringify(imports.edges) : "",
           routes ? JSON.stringify(routes.nodes.map((n) => n.id)) : "",
+          schema ? JSON.stringify(schema.nodes.map((n) => n.id)) : "",
         ],
       },
     ];

@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { Project } from "ts-morph";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Config } from "../config.js";
 import type { Graph } from "../graph.js";
@@ -8,7 +9,7 @@ import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { routeLinks, seams, systems } from "./systems.js";
-import { readStory, screenCalls } from "./ui.js";
+import { readStory, recordReads, recordTables, screenCalls } from "./ui.js";
 import { headerLine } from "./workspace.js";
 
 const FILES: Record<string, string> = {
@@ -470,6 +471,39 @@ describe("systems routeLinks", () => {
     };
     expect(routeLinks(routes, { stripe: "stripe", "@acme": "acme" })).toEqual([
       { from: "route:Pay/charge", to: "stripe", kind: "uses", title: "npm `stripe`" },
+    ]);
+  });
+});
+
+describe("record screens", () => {
+  it("read their kind's views and what its rows reach, a const id through the checker", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    project.createSourceFile(
+      "/r.ts",
+      `declare function defineRecord(d: object): object;
+const DAY = "health.day";
+defineRecord({ id: DAY, view: "delivery.days", activity: { view: "day_events" } });
+defineRecord({ id: "health.rows", rows: (db: { query(s: string): unknown }) => db.query("select * from public.scores") });
+defineRecord({ id: "health.none", rows: () => [] });`,
+    );
+    const tables = new Set([
+      "table:delivery.days",
+      "table:public.day_events",
+      "table:public.scores",
+    ]);
+    const kinds = recordTables(project, "defineRecord", tables);
+    expect([...kinds]).toEqual([
+      ["health.day", ["table:delivery.days", "table:public.day_events"]],
+      ["health.rows", ["table:public.scores"]],
+    ]);
+    const nodes: Graph["nodes"] = [
+      { id: "ui:h/day", role: "screen", group: "h", attrs: { record: "health.day" } },
+      { id: "ui:h/rows", role: "screen", group: "h", attrs: { record: "health.rows" } },
+    ];
+    expect(recordReads(nodes, kinds)).toEqual([
+      { from: "ui:h/day", to: "table:delivery.days", kind: "reads" },
+      { from: "ui:h/day", to: "table:public.day_events", kind: "reads" },
+      { from: "ui:h/rows", to: "table:public.scores", kind: "reads" },
     ]);
   });
 });

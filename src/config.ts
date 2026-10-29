@@ -90,6 +90,8 @@ const Ui = z.object({
   inputs: z.array(z.string()).optional(),
   /** The web's api client functions: `<fn>("<service>/<route>")` is a screen's call (layers/ui.ts). */
   calls: z.array(z.string()).default(["call"]),
+  /** The function a record kind is declared with: `<fn>({id, view})` (layers/ui.ts). */
+  records: z.string().optional(),
 });
 
 const Health = z.object({
