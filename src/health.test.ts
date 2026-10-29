@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Graph, Node } from "./graph.js";
-import { cycles, FLAT_OVER, fromGraphs, fromJscpd, fromKnip, page, pinsBehind } from "./health.js";
+import {
+  cycles,
+  FLAT_OVER,
+  fromGraphs,
+  fromJscpd,
+  fromKnip,
+  page,
+  pinsBehind,
+  plain,
+} from "./health.js";
 
 const file = (id: string, parent = "pkg"): Node => ({ id, role: "file", parent, group: parent });
 const imp = (from: string, to: string, type = false): Edge => ({
@@ -108,6 +117,39 @@ describe("page", () => {
     expect(md).toContain("- `a`, `b`");
     expect(md).not.toContain("Duplicated lines");
     expect(md).not.toContain("Unused");
+  });
+});
+
+describe("plain", () => {
+  it("says each signal in one sentence, worst case first, and skips a zero", () => {
+    const lines = plain({
+      cycles: [
+        ["a.ts", "b.ts"],
+        ["c.ts", "d.ts", "e.ts"],
+      ],
+      flat: [],
+      fanIn: [],
+      fanOut: [],
+      inferred: [],
+      unused: {
+        exports: [
+          { file: "packages/a/src/x.ts", name: "x" },
+          { file: "packages/a/src/y.ts", name: "y" },
+          { file: "packages/b/src/z.ts", name: "z" },
+        ],
+        types: [],
+        dependencies: [],
+      },
+      behind: [
+        { pkg: "@x/a", name: "@own/m", pinned: "1.0.0", latest: "1.2.0", n: 2 },
+        { pkg: "@x/b", name: "@own/m", pinned: "1.0.0", latest: "1.2.0", n: 2 },
+      ],
+    });
+    expect(lines).toEqual([
+      "2 pins are behind a newer publish. The worst: `@own/m@1.0.0`, 2 behind 1.2.0, in 2 packages. Bump each scope in one change.",
+      "2 file cycles: files that import each other in a loop. The largest has 3 files, from `c.ts`. Move what they share into one file that imports none of them.",
+      "3 exports nothing imports. Most are in `packages/a` (2). Delete them, or stop the export.",
+    ]);
   });
 });
 

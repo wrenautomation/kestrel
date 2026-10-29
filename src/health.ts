@@ -269,12 +269,77 @@ export async function runTools(
 }
 
 /** The report as a page: counts first, then each list. */
+const n_ = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
+/** The key with the most rows: `[key, count]`. */
+const most = <T>(list: readonly T[], key: (t: T) => string): [string, number] | undefined => {
+  const m = new Map<string, number>();
+  for (const t of list) m.set(key(t), (m.get(key(t)) ?? 0) + 1);
+  return [...m].sort((a, b) => b[1] - a[1])[0];
+};
+const pkgOf = (file: string) => file.split("/").slice(0, 2).join("/");
+
+/** One sentence per signal with a count: what it is, the worst case, what to do. Fix order. */
+export function plain(h: Health): string[] {
+  const t = (s: string) => `\`${s}\``;
+  const out: string[] = [];
+  if (h.behind?.length) {
+    const w = [...h.behind].sort((a, b) => b.n - a.n)[0] as Behind;
+    const pkgs = h.behind.filter((b) => b.name === w.name && b.pinned === w.pinned).length;
+    out.push(
+      `${n_(h.behind.length, "pin is", "pins are")} behind a newer publish. The worst: ${t(`${w.name}@${w.pinned}`)}, ${w.n} behind ${w.latest}, in ${n_(pkgs, "package")}. Bump each scope in one change.`,
+    );
+  }
+  if (h.cycles.length) {
+    const big = [...h.cycles].sort((a, b) => b.length - a.length)[0] as string[];
+    out.push(
+      `${n_(h.cycles.length, "file cycle")}: files that import each other in a loop. The largest has ${big.length} files, from ${t(big[0] as string)}. Move what they share into one file that imports none of them.`,
+    );
+  }
+  if (h.unused?.dependencies.length)
+    out.push(
+      `${n_(h.unused.dependencies.length, "dependency", "dependencies")} no code imports: ${h.unused.dependencies
+        .slice(0, 5)
+        .map((d) => t(d.name))
+        .join(
+          ", ",
+        )}${h.unused.dependencies.length > 5 ? " and more" : ""}. Remove them from package.json.`,
+    );
+  const dead = [...(h.unused?.exports ?? []), ...(h.unused?.types ?? [])];
+  if (dead.length) {
+    const [pkg, k] = most(dead, (u) => pkgOf(u.file)) as [string, number];
+    out.push(
+      `${n_(dead.length, "export")} nothing imports. Most are in ${t(pkg)} (${k}). Delete them, or stop the export.`,
+    );
+  }
+  if (h.flat.length) {
+    const f = [...h.flat].sort((a, b) => b.boxes - a.boxes)[0] as Health["flat"][number];
+    out.push(
+      `${n_(h.flat.length, "folder")} over ${FLAT_OVER} boxes: too flat to read as a graph. The largest: ${t(f.folder)} (${f.boxes}). Group its files by job.`,
+    );
+  }
+  if (h.duplicates?.clones) {
+    const c = h.duplicates.top[0];
+    out.push(
+      `${h.duplicates.percent}% of lines are copies (${n_(h.duplicates.clones, "clone")}).${c ? ` The largest: ${c.lines} lines, ${t(c.a)} and ${t(c.b)}.` : ""} Share the part where both copies change together.`,
+    );
+  }
+  const inferred = h.inferred.reduce((a, p) => a + p.n, 0);
+  if (inferred) {
+    const p = h.inferred[0] as Health["inferred"][number];
+    out.push(
+      `${n_(inferred, "export")} with no declared type: the interface is whatever the code returns. Most: ${t(p.pkg)} (${p.n} of ${p.of}). Declare the type where other packages use it.`,
+    );
+  }
+  return out;
+}
+
 export function page(h: Health): string {
   const L: string[] = ["# Health", ""];
   const tick = (s: string) => `\`${s}\``;
+  L.push("Signals, not a gate. Package layers and package cycles are the repo's own gate.", "");
+  const read = plain(h);
+  if (read.length) L.push("## Read first", "", ...read.map((s, i) => `${i + 1}. ${s}`), "");
   L.push(
-    "Signals, not a gate. Package layers and package cycles are the repo's own gate.",
-    "",
     "| Signal | Count |",
     "|---|---|",
     `| File cycles | ${h.cycles.length} |`,
