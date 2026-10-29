@@ -319,6 +319,7 @@ export async function viewData(root: string, configFile?: string) {
     })),
     require: config.cards?.require ?? [],
     cost: await readJson<Cost>(resolve(root, config.out, "cost.current.json")),
+    ...(config.layers.ui?.storybook ? { storybook: config.layers.ui.storybook } : {}),
   });
   return view;
 }

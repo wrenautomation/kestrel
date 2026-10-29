@@ -92,6 +92,12 @@ const Ui = z.object({
   calls: z.array(z.string()).default(["call"]),
   /** The function a record kind is declared with: `<fn>({id, view})` (layers/ui.ts). */
   records: z.string().optional(),
+  /** The function a page story is made with: `export const X = <fn>("/path", …)` (layers/ui.ts). */
+  pages: z.string().optional(),
+  /** A pattern on a page story's call: a match signs in to the team workspace, else a client's. */
+  team: z.string().optional(),
+  /** The Storybook that serves the stories, for the view's live screen: `http://localhost:6006`. */
+  storybook: z.string().optional(),
 });
 
 const Health = z.object({

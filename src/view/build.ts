@@ -33,6 +33,7 @@ export interface ViewInput {
   require?: readonly string[];
   /** `kestrel cost`'s stored report, when there is one. */
   cost?: Cost | null;
+  storybook?: string;
 }
 
 /** Over this many boxes a layered graph is a hairball, and ELK takes seconds: a grid by fan-in. */
@@ -631,5 +632,6 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     levels: Object.fromEntries(Object.entries(levels).sort(([a], [b]) => a.localeCompare(b))),
     index,
     counts,
+    ...(input.storybook ? { storybook: input.storybook } : {}),
   };
 }

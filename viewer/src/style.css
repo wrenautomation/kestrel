@@ -1151,3 +1151,49 @@ dialog::backdrop {
     transition: none;
   }
 }
+
+/* live screen: the page story drawn at desktop width, scaled to its column */
+.slice.live .cols {
+  grid-template-columns: minmax(360px, 1.8fr) repeat(3, minmax(200px, 1fr));
+}
+.col.screen .frame {
+  position: relative;
+  height: min(62vh, 640px);
+  overflow: hidden;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: #fff;
+}
+.col.screen .frame iframe {
+  position: absolute;
+  inset: 0 auto auto 0;
+  border: 0;
+  transform-origin: 0 0;
+}
+.col.screen .tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.col.screen .tabs button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--hair);
+  border-radius: 99px;
+  background: var(--canvas);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.col.screen .tabs button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--tint);
+  border-color: transparent;
+}
+.tag.k-ran {
+  color: var(--accent);
+  background: var(--tint);
+}
+.col.screen .meta a {
+  color: var(--accent);
+}

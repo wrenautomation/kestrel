@@ -293,7 +293,13 @@ describe("slices", () => {
       screen("ui:a/rec", { record: "r" }),
     ],
     [
-      { from: "ui:a/one", to: "route:Pay/charge", kind: "calls", attrs: { at: ["one.tsx"] } },
+      {
+        from: "ui:a/one",
+        to: "route:Pay/charge",
+        kind: "calls",
+        attrs: { at: ["one.tsx"], path: "pay/charge" },
+      },
+      { from: "story:p", to: "ui:a/one", kind: "renders", attrs: { stories: ["p--one"] } },
       ...["two", "three", "four"].map((x) => ({
         from: `ui:a/${x}`,
         to: "route:Pay/list",
@@ -339,8 +345,15 @@ describe("slices", () => {
   it("gives a screen its calls, the tables behind them and what they reach outside", () => {
     const one = out.get("ui:a/one");
     expect(one?.calls).toEqual([
-      { id: "route:Pay/charge", name: "Pay/charge", box: "file:pay.ts", at: ["one.tsx"] },
+      {
+        id: "route:Pay/charge",
+        name: "Pay/charge",
+        box: "file:pay.ts",
+        at: ["one.tsx"],
+        path: "pay/charge",
+      },
     ]);
+    expect(one?.stories).toEqual(["p--one"]);
     expect(one?.tables.map((t) => [t.label, t.kind, !!t.shared])).toEqual([
       ["public.charges", "writes", false],
       ["public.clients", "reads", true],

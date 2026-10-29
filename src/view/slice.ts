@@ -2,7 +2,7 @@
  * A screen's slice: the routes it calls, the tables behind them, what they reach outside. Calls
  * are the ui layer's `calls` edges; tables, the routes' `reads`/`writes` edges and a record
  * screen's own `reads`; outside, the systems layer's route `uses` edges and route attrs `npm` and
- * `hosts`. Shared: a call or table more than a quarter of the calling screens reach (the access
+ * `hosts`; stories, the ui layer's `renders` edges. Shared: a call or table more than a quarter of the calling screens reach (the access
  * checks' tables, the session route), the same cut as the ui shell and the routes stack.
  */
 import type { Graph } from "../graph.js";
@@ -35,11 +35,19 @@ export function slices(
       for (const t of list(e.attrs?.title))
         sysPkgs.set(e.from, (sysPkgs.get(e.from) ?? new Set()).add(t.replace(/^npm `|`$/g, "")));
 
-  const calls = new Map<string, { to: string; at: string[] }[]>();
+  const calls = new Map<string, { to: string; at: string[]; path?: string }[]>();
   const own = new Map<string, string[]>();
+  const stories = new Map<string, string[]>();
   for (const e of ui.edges) {
-    if (e.kind === "calls")
-      calls.set(e.from, [...(calls.get(e.from) ?? []), { to: e.to, at: list(e.attrs?.at) }]);
+    if (e.kind === "renders")
+      stories.set(e.to, [...(stories.get(e.to) ?? []), ...list(e.attrs?.stories)]);
+    if (e.kind === "calls") {
+      const path = typeof e.attrs?.path === "string" ? e.attrs.path : undefined;
+      calls.set(e.from, [
+        ...(calls.get(e.from) ?? []),
+        { to: e.to, at: list(e.attrs?.at), ...(path ? { path } : {}) },
+      ]);
+    }
     if (e.kind === "reads") own.set(e.from, [...(own.get(e.from) ?? []), e.to]);
   }
 
@@ -49,7 +57,8 @@ export function slices(
     const mine = own.get(s.id) ?? [];
     const missing = list(s.attrs?.missing);
     const host = list(s.attrs?.host);
-    if (!c.length && !mine.length && !missing.length && !host.length) continue;
+    const shown = stories.get(s.id) ?? [];
+    if (!c.length && !mine.length && !missing.length && !host.length && !shown.length) continue;
     const tables = new Map<string, SliceItem>();
     const outside = new Map<string, SliceItem>();
     const put = (m: Map<string, SliceItem>, it: Omit<SliceItem, "via">, via: string) => {
@@ -81,19 +90,21 @@ export function slices(
         tables.delete(k);
       }
     out.set(s.id, {
-      calls: c.map(({ to, at }) => {
+      calls: c.map(({ to, at, path }) => {
         const box = boxOf(to);
         return {
           id: to,
           name: to.slice("route:".length),
           ...(box ? { box } : {}),
           at,
+          ...(path ? { path } : {}),
         };
       }),
       tables: [...tables.values()],
       outside: [...outside.values()],
       ...(missing.length ? { missing } : {}),
       ...(host.length ? { host } : {}),
+      ...(shown.length ? { stories: shown } : {}),
     });
   }
 

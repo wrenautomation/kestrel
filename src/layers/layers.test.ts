@@ -4,12 +4,12 @@ import { dirname, join } from "node:path";
 import { Project } from "ts-morph";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Config } from "../config.js";
-import type { Graph } from "../graph.js";
+import type { Graph, Node } from "../graph.js";
 import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
 import { routeLinks, seams, systems } from "./systems.js";
-import { readStory, recordReads, recordTables, screenCalls } from "./ui.js";
+import { pageEdges, readStory, recordReads, recordTables, screenCalls } from "./ui.js";
 import { headerLine } from "./workspace.js";
 
 const FILES: Record<string, string> = {
@@ -381,6 +381,83 @@ export const One = { args: { id: "n1" } };
       title: "bare",
     });
   });
+
+  it("reads page stories as Storybook ids and links each to the screen its address opens", () => {
+    const text = `const meta: Meta = { title: "Revamp/Learn", id: "pages-learn" };
+export default meta;
+export const Today = pageAt("/learn/today", {
+  me: ADMIN,
+});
+export const SourcesPickTwoFast: StoryObj = pageAt("/learn/sources?x=1", { me: ADMIN });
+export const Home = pageAt("/learn");
+export const Person = pageAt("/learn/people/42", { me: ADMIN });
+export const Gone = pageAt("/nowhere");
+export const Plain = { args: {} };
+`;
+    const story = readStory(root, "app/src/pages-learn.stories.tsx", text, "pageAt", /me: ADMIN/);
+    expect(story.pages).toEqual([
+      { id: "pages-learn--today", at: "/learn/today", team: true },
+      { id: "pages-learn--sources-pick-two-fast", at: "/learn/sources?x=1", team: true },
+      { id: "pages-learn--home", at: "/learn" },
+      { id: "pages-learn--person", at: "/learn/people/42", team: true },
+      { id: "pages-learn--gone", at: "/nowhere" },
+    ]);
+    // two apps at /learn: the team's (`ui:learn`) and a client's (`ui:clientLearn`)
+    const app = (id: string, workspace: string): Node => ({
+      id,
+      role: "app",
+      group: "learn",
+      attrs: { path: "/learn", workspace },
+    });
+    const page = (id: string, order: number, parent = "ui:learn"): Node => ({
+      id,
+      role: "screen",
+      parent,
+      group: "learn",
+      attrs: { order },
+    });
+    const nodes = [
+      app("ui:clientLearn", "client"),
+      app("ui:learn", "wren"),
+      page("ui:clientLearn/today", 0, "ui:clientLearn"),
+      page("ui:learn/today", 1),
+      page("ui:learn/home", 0),
+      page("ui:learn/sources", 2),
+      page("ui:learn/people", 3),
+    ];
+    // unsplit: the first app at an address wins
+    expect(pageEdges(nodes, [story]).map((e) => e.to)).toEqual([
+      "ui:clientLearn/today",
+      "ui:learn/sources",
+      "ui:learn/people",
+    ]);
+    expect(pageEdges(nodes, [story], true)).toEqual([
+      {
+        from: "story:pages-learn",
+        to: "ui:learn/today",
+        kind: "renders",
+        attrs: { stories: ["pages-learn--today"] },
+      },
+      {
+        from: "story:pages-learn",
+        to: "ui:learn/sources",
+        kind: "renders",
+        attrs: { stories: ["pages-learn--sources-pick-two-fast"] },
+      },
+      {
+        from: "story:pages-learn",
+        to: "ui:clientLearn/today",
+        kind: "renders",
+        attrs: { stories: ["pages-learn--home"] },
+      },
+      {
+        from: "story:pages-learn",
+        to: "ui:learn/people",
+        kind: "renders",
+        attrs: { stories: ["pages-learn--person"] },
+      },
+    ]);
+  });
 });
 
 describe("screenCalls", () => {
@@ -432,8 +509,18 @@ describe("screenCalls", () => {
   });
   it("links a screen to the routes its files call, the plain service first", () => {
     expect(out.edges).toEqual([
-      { from: "ui:a/one", to: "route:Accounts/list", kind: "calls", attrs: { at: ["hook.ts"] } },
-      { from: "ui:a/two", to: "route:Accounts/list", kind: "calls", attrs: { at: ["s2.tsx"] } },
+      {
+        from: "ui:a/one",
+        to: "route:Accounts/list",
+        kind: "calls",
+        attrs: { at: ["hook.ts"], path: "accounts/list" },
+      },
+      {
+        from: "ui:a/two",
+        to: "route:Accounts/list",
+        kind: "calls",
+        attrs: { at: ["s2.tsx"], path: "accounts/list" },
+      },
     ]);
   });
   it("leaves out shell calls and lists literals no route matches", () => {

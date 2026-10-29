@@ -92,6 +92,8 @@ export interface Slice {
   /** Call literals no route answers: the service has no such route, or no service has the prefix. */
   missing?: string[];
   host?: string[];
+  /** Storybook ids of the page stories that open it. */
+  stories?: string[];
 }
 
 export interface SliceCall {
@@ -102,6 +104,8 @@ export interface SliceCall {
   box?: string;
   /** Files the call is written in. */
   at: string[];
+  /** The client path written: what a story's call log names. */
+  path?: string;
   /** Over a quarter of the sliced screens call it. */
   shared?: true;
 }
@@ -187,6 +191,8 @@ export interface ViewData {
   /** Every export and route, for search: name → the file box that shows it. */
   index: { name: string; kind: string; box: string }[];
   counts: Record<string, number>;
+  /** The Storybook that serves the page stories (`layers.ui.storybook`). */
+  storybook?: string;
 }
 
 /** A card as the view shows it: `covers` are current node ids. */

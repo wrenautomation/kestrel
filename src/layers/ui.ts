@@ -14,7 +14,8 @@
  * already links to the parts. Groups: one per app, `_stories` for the stories.
  * Edges `calls`: screen → route. The dump's `api` maps a client path's first part to the service
  * it reaches (`accounts` → `AccountsConsole`). A literal `<fn>("accounts/list")` (fns in
- * `layers.ui.calls`) in a file the screen's file reaches is a call; `at` holds the files. Only
+ * `layers.ui.calls`) in a file the screen's file reaches is a call; `at` holds the files, `path`
+ * the literal (the key a story's call log names). Only
  * screens drawn by their own file (`hand`): a template screen's calls are its template's. Shell:
  * a file reached by over a quarter of the screen files (the api client, the frame) calls for every
  * screen, so its calls are left out. Known gap: a hook that several screens share hides too; the
@@ -24,12 +25,14 @@
  * Edges `reads`: record screen → table. Each `<records>({id, view, activity?: {view}})` call in the
  * packages (`layers.ui.records`) names a kind's views; the checker reads a const id. A view with
  * no schema is `public`. A kind's `rows` function: the tables it reaches (./reach.ts).
+ * Edges `renders`: story → screen (`pageEdges`), from `export const X = <pages>("/path")`.
  */
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { glob, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
+import { storyNameFromExport, toId } from "@storybook/csf";
 import { type Project, SyntaxKind, Node as TsNode } from "ts-morph";
 import { z } from "zod";
 import { filesOf, WHOLE } from "../cache.js";
@@ -88,6 +91,8 @@ export interface Story {
   title: string;
   /** Repo-relative files it imports by a relative path. */
   shows: string[];
+  /** Page stories: the Storybook id, the address each opens, and the team workspace or not. */
+  pages?: { id: string; at: string; team?: true }[];
 }
 
 /** A file reached by more than this share of the screen files is shell (see the header). */
@@ -154,7 +159,8 @@ export function screenCalls(x: CallsInput): {
       const [head = "", ...rest] = l.split("/");
       const svc = x.api[head];
       const to = svc ? route.get(`${svc}/${rest.join("/")}`) : undefined;
-      if (to) edges.push({ from: s.id, to, kind: "calls", attrs: { at: [...files].sort() } });
+      if (to)
+        edges.push({ from: s.id, to, kind: "calls", attrs: { at: [...files].sort(), path: l } });
       else (svc ? missing : host).push(l);
     }
     if (missing.length || host.length)
@@ -171,6 +177,8 @@ export function fromDump(
   d: Dump,
   stories: Story[],
   calls?: Omit<CallsInput, "screens" | "api">,
+  /** Page stories pick a workspace (`layers.ui.team`). */
+  split = false,
 ): Graph {
   const nodes: Node[] = [];
   // Each app's place in each sidebar: `team: Marketing`. The team sidebar holds team apps only,
@@ -200,6 +208,7 @@ export function fromDump(
     set(attrs, "areas", at.length ? at : undefined);
     set(attrs, "parked", app.parked);
     set(attrs, "menu", app.menu);
+    set(attrs, "path", `/${app.id}`);
     nodes.push({ id, role: "app", group: key, attrs });
     for (const [i, p] of app.pages.entries()) {
       // Ids sort; the tab order is kept here.
@@ -219,7 +228,8 @@ export function fromDump(
       group: "_stories",
       attrs: { title: s.title, file: s.file, shows: s.shows },
     });
-  if (!calls || !d.api) return { layer: "ui", nodes, edges: [] };
+  const shown = pageEdges(nodes, stories, split);
+  if (!calls || !d.api) return { layer: "ui", nodes, edges: shown };
   const screens = nodes.flatMap((n) =>
     n.role === "screen" && n.attrs?.template === "hand" && typeof n.attrs.file === "string"
       ? [{ id: n.id, file: n.attrs.file }]
@@ -230,7 +240,60 @@ export function fromDump(
     const l = lost.get(n.id);
     if (l) n.attrs = { ...n.attrs, ...l };
   }
-  return { layer: "ui", nodes, edges };
+  return { layer: "ui", nodes, edges: [...shown, ...edges] };
+}
+
+/**
+ * Story → screen edges `renders`, attr `stories`: the page stories that open it. A screen's
+ * address is its app's `path` and its page id, in its app's workspace (two apps can share a
+ * path, one per workspace); a story's address can go under it (a record). An app's own address
+ * is its first page. Without `split`, the workspace is not read and the first app wins.
+ */
+export function pageEdges(
+  nodes: readonly Node[],
+  stories: readonly Story[],
+  split = false,
+): Edge[] {
+  const app = new Map<string, { path: string; ws: string }>();
+  for (const n of nodes)
+    if (n.role === "app" && typeof n.attrs?.path === "string")
+      app.set(n.id, { path: n.attrs.path, ws: split ? String(n.attrs.workspace) : "" });
+  const screen = new Map<string, string>();
+  const first = new Map<string, { id: string; order: number }>();
+  for (const n of nodes) {
+    const a = n.role === "screen" && n.parent ? app.get(n.parent) : undefined;
+    if (!a || !n.parent) continue;
+    const k = `${a.ws}\0${a.path.slice(1)}/${n.id.slice(n.parent.length + 1)}`;
+    if (!screen.has(k)) screen.set(k, n.id);
+    const order = Number(n.attrs?.order ?? 0);
+    const had = first.get(n.parent);
+    if (!had || order < had.order) first.set(n.parent, { id: n.id, order });
+  }
+  for (const [id, f] of first) {
+    const a = app.get(id) as { path: string; ws: string };
+    const k = `${a.ws}\0${a.path.slice(1)}`;
+    if (!screen.has(k)) screen.set(k, f.id);
+  }
+  const edges: Edge[] = [];
+  for (const s of stories) {
+    const to = new Map<string, string[]>();
+    for (const p of s.pages ?? []) {
+      const parts = p.at
+        .replace(/[?#].*$/, "")
+        .split("/")
+        .filter(Boolean);
+      const ws = split ? (p.team ? "wren" : "client") : "";
+      for (let i = parts.length; i > 0; i--) {
+        const hit = screen.get(`${ws}\0${parts.slice(0, i).join("/")}`);
+        if (!hit) continue;
+        to.set(hit, [...(to.get(hit) ?? []), p.id]);
+        break;
+      }
+    }
+    for (const [id, ids] of to)
+      edges.push({ from: `story:${s.id}`, to: id, kind: "renders", attrs: { stories: ids } });
+  }
+  return edges;
 }
 
 /** The repo source globs records are read from: the routes layer's packages. */
@@ -290,8 +353,17 @@ export function recordReads(nodes: readonly Node[], kinds: Map<string, string[]>
   });
 }
 
-/** One CSF file: its meta's `title` and `id` (the file name when it has none), and its relative imports. */
-export function readStory(root: string, file: string, text: string): Story {
+/**
+ * One CSF file: its meta's `title` and `id` (the file name when it has none), its relative
+ * imports, and with `page` the exports made by `<page>("/path")`.
+ */
+export function readStory(
+  root: string,
+  file: string,
+  text: string,
+  page?: string,
+  team?: RegExp,
+): Story {
   // `export default meta;` names a const above it: read the meta from there.
   const named = /export default\s+(\w+)\s*;/.exec(text)?.[1];
   const decl = named ? text.search(new RegExp(`\\b(?:const|let|var)\\s+${named}\\b`)) : -1;
@@ -308,7 +380,34 @@ export function readStory(root: string, file: string, text: string): Story {
     if (hit && !/[./](fixtures?|stories|mocks?)\b/.test(hit)) shows.add(hit);
   }
   const name = file.replace(/^.*\//, "").replace(/\.stories\.tsx?$/, "");
-  return { file, id: id ?? name, title: title ?? name, shows: [...shows].sort() };
+  const kind = id ?? title ?? name;
+  const pages = page
+    ? [
+        ...text.matchAll(
+          new RegExp(
+            `^export const (\\w+)\\s*(?::[^=]+)?=\\s*${page}\\(\\s*["'\`]([^"'\`]+)`,
+            "gm",
+          ),
+        ),
+      ].map((m) => {
+        // the call runs to the next export
+        const rest = text.slice(m.index);
+        const end = rest.slice(1).search(/^export /m);
+        const call = end < 0 ? rest : rest.slice(0, end + 1);
+        return {
+          id: toId(kind, storyNameFromExport(m[1] as string)),
+          at: m[2] as string,
+          ...(team?.test(call) ? { team: true as const } : {}),
+        };
+      })
+    : [];
+  return {
+    file,
+    id: id ?? name,
+    title: title ?? name,
+    shows: [...shows].sort(),
+    ...(pages.length ? { pages } : {}),
+  };
 }
 
 async function extract(ctx: LayerContext): Promise<Graph> {
@@ -325,13 +424,18 @@ async function extract(ctx: LayerContext): Promise<Graph> {
     await writeFile(readOf(ctx.root), JSON.stringify(dump.inputs));
   } else await rm(readOf(ctx.root), { force: true });
   const stories: Story[] = [];
+  const team = cfg.team ? new RegExp(cfg.team) : undefined;
   for await (const f of glob(cfg.stories, { cwd: ctx.root })) {
     if (f.includes("node_modules")) continue;
     const file = relative(ctx.root, join(ctx.root, f));
-    stories.push(readStory(ctx.root, file, await readFile(join(ctx.root, file), "utf8")));
+    stories.push(
+      readStory(ctx.root, file, await readFile(join(ctx.root, file), "utf8"), cfg.pages, team),
+    );
   }
   const imports = await ctx.prior("imports");
-  const g = imports ? await withCalls(ctx, dump, stories, imports) : fromDump(dump, stories);
+  const g = imports
+    ? await withCalls(ctx, dump, stories, imports)
+    : fromDump(dump, stories, undefined, Boolean(cfg.team));
   if (!cfg.records) return g;
   const schema = await ctx.prior("schema");
   const tables = new Set((schema?.nodes ?? []).filter((n) => n.role === "table").map((n) => n.id));
@@ -346,21 +450,26 @@ async function withCalls(ctx: LayerContext, dump: Dump, stories: Story[], import
   const cfg = ctx.config.layers.ui as NonNullable<LayerContext["config"]["layers"]["ui"]>;
   const { pathOf, idOf } = paths(imports);
   const from = reach(imports);
-  return fromDump(dump, stories, {
-    reach: (file) => {
-      const id = idOf.get(file);
-      return id ? new Set([...from(id)].flatMap((f) => pathOf.get(f) ?? [])) : undefined;
+  return fromDump(
+    dump,
+    stories,
+    {
+      reach: (file) => {
+        const id = idOf.get(file);
+        return id ? new Set([...from(id)].flatMap((f) => pathOf.get(f) ?? [])) : undefined;
+      },
+      text: (file) => {
+        try {
+          return readFileSync(join(ctx.root, file), "utf8");
+        } catch {
+          return "";
+        }
+      },
+      routes: await ctx.prior("routes"),
+      fns: cfg.calls,
     },
-    text: (file) => {
-      try {
-        return readFileSync(join(ctx.root, file), "utf8");
-      } catch {
-        return "";
-      }
-    },
-    routes: await ctx.prior("routes"),
-    fns: cfg.calls,
-  });
+    Boolean(cfg.team),
+  );
 }
 
 /** Source files that call the records function. */
