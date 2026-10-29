@@ -237,12 +237,52 @@ code {
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 6px 14px;
-  --sk-line: color-mix(in srgb, var(--c, var(--ink-3)) 60%, var(--ink-2));
-  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 9%, var(--paper));
-  --sk-w: 1.15px;
+  padding: 10px 14px;
+  --sk-line: color-mix(in srgb, var(--c, var(--ink-3)) 38%, var(--ink-3));
+  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 3%, var(--paper));
+  --sk-w: 1.1px;
   cursor: pointer;
   transition: opacity 0.18s var(--ease);
+}
+.box:not(.zoned) .sk {
+  filter: drop-shadow(0 1px 1px rgb(14 14 14 / 0.05)) drop-shadow(0 6px 10px rgb(40 30 70 / 0.06));
+  transition: filter 0.18s var(--ease), translate 0.18s var(--ease);
+}
+.box:not(.zoned):hover .sk {
+  filter: drop-shadow(0 2px 2px rgb(14 14 14 / 0.06)) drop-shadow(0 12px 18px rgb(40 30 70 / 0.12));
+}
+.box:not(.zoned):hover {
+  --sk-line: color-mix(in srgb, var(--c, var(--ink-3)) 70%, var(--ink-2));
+}
+.box .kick {
+  font-size: 10.5px;
+  line-height: 15px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--c, var(--ink-3)) 82%, var(--ink));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+.box .kick::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--c, var(--ink-3));
+  flex: none;
+}
+.box.zoned .kick .sub {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 11.5px;
+}
+.far .box:not(.zoned) .kick {
+  display: none;
 }
 .box > :not(.sk) {
   position: relative;
@@ -257,6 +297,10 @@ code {
   fill: var(--sk-fill);
   stroke: none;
 }
+.sk .back.s {
+  stroke: color-mix(in srgb, var(--sk-line) 55%, transparent);
+  stroke-width: 1px;
+}
 .sk .s {
   fill: none;
   stroke: var(--sk-line);
@@ -266,7 +310,8 @@ code {
 }
 .shape-zone {
   /* Translucent: lines under an open box still show. */
-  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 6%, transparent);
+  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) 4.5%, transparent);
+  --sk-line: color-mix(in srgb, var(--c, var(--ink-3)) 45%, var(--ink-3));
 }
 .box.zoned {
   cursor: default;
@@ -284,6 +329,10 @@ code {
   line-height: 15px;
   color: var(--ink-2);
   margin-top: 3px;
+  text-wrap: pretty;
+}
+.box.zoned .desc {
+  max-width: 64ch;
 }
 .far .box:not(.zoned) .desc {
   display: none;
@@ -343,21 +392,37 @@ code {
   opacity: 0.35;
 }
 .shape-zone .sk .s {
-  stroke-dasharray: 7 5;
+  stroke-dasharray: 2 6;
+  stroke-width: 1.6px;
 }
 .shape-pill {
   padding-inline: 20px;
 }
 .box .label {
   font-weight: 650;
+  letter-spacing: -0.012em;
   /* About 11px on screen at any zoom out; the box's own size from 1x up. */
   font-size: min(clamp(13.5px, calc(11px / var(--z, 1)), 28px), var(--fit, 28px));
   line-height: 1.25;
 }
+/* A zone's title stays readable when the whole map fits: up to the header's height. */
+.box.zoned .label {
+  font-size: clamp(16px, calc(13px / var(--z, 1)), 56px);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.far .box.zoned .desc,
+.far .box.zoned .kick {
+  display: none;
+}
 .box .sub {
-  font-size: 12px;
+  font: 500 11px / 15px var(--mono);
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
+  margin-top: 5px;
+}
+.box.zoned .sub {
+  margin: 0;
 }
 .far .box .sub {
   display: none;
@@ -380,9 +445,13 @@ code {
 }
 .box.sel {
   --sk-line: var(--accent);
-  --sk-w: 2.6px;
+  --sk-w: 2.2px;
+  --sk-fill: color-mix(in srgb, var(--accent) 7%, var(--paper));
 }
-.badge {
+.box.sel .sk {
+  filter: drop-shadow(0 0 0.5px var(--accent)) drop-shadow(0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent));
+}
+.box .badge {
   position: absolute;
   top: -8px;
   right: 8px;
@@ -393,6 +462,9 @@ code {
   background: var(--paper);
   box-shadow: 0 0 0 1px var(--hair);
   color: var(--ink-2);
+}
+.far .box .badge {
+  display: none;
 }
 .badge.stale {
   color: var(--warn);
@@ -434,8 +506,8 @@ code {
 }
 
 .line {
-  stroke: var(--ink-2);
-  stroke-opacity: 0.6;
+  stroke: var(--ink-3);
+  stroke-opacity: 0.5;
   fill: none;
   transition: stroke-opacity 0.18s var(--ease);
 }
@@ -450,15 +522,25 @@ code {
   stroke-opacity: 0.12;
 }
 .line.faint {
-  stroke-opacity: 0.18;
+  stroke-opacity: 0.07;
 }
 .react-flow__minimap {
   background: var(--paper);
-  box-shadow: 0 0 0 1px var(--hair);
-  border-radius: 6px;
+  box-shadow: var(--raise);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.react-flow__minimap svg {
+  width: 168px;
+  height: 112px;
 }
 .react-flow__minimap .mm {
-  fill: var(--c, var(--ink-3));
+  fill: color-mix(in srgb, var(--c, var(--ink-3)) 55%, var(--paper));
+}
+.react-flow__minimap .mm-zone {
+  fill: color-mix(in srgb, var(--c, var(--ink-3)) 8%, transparent);
+  stroke: color-mix(in srgb, var(--c, var(--ink-3)) 50%, transparent);
+  stroke-width: 6;
 }
 
 /* Detail: depth on one click. Whole text, never cut. */
@@ -466,22 +548,43 @@ code {
   background: var(--paper);
   box-shadow: -1px 0 0 var(--hair);
   overflow-y: auto;
-  padding: 18px 18px 60px;
+  padding: 22px 22px 60px;
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: 18px;
 }
 .detail header {
+  display: grid;
+  gap: 4px;
+}
+.detail .kind {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--c, var(--ink-3)) 82%, var(--ink));
+}
+.detail .kind .dot {
+  width: 8px;
+  height: 8px;
 }
 .detail h2 {
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-size: 24px;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.025em;
   margin: 0;
   overflow-wrap: anywhere;
+}
+.detail .lead {
+  margin: -4px 0 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-wrap: pretty;
 }
 .dot {
   width: 10px;
@@ -491,7 +594,7 @@ code {
   flex: none;
 }
 .path {
-  margin: -8px 0 0;
+  margin: 0;
   font: 12px / 1.4 var(--mono);
   color: var(--ink-3);
   overflow-wrap: anywhere;
@@ -509,14 +612,31 @@ dl.facts {
   margin: 0;
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 2px 14px;
-  font-size: 13px;
+  font-size: 13.5px;
+  border-top: 1px solid var(--hair);
+}
+dl.facts:empty {
+  display: none;
+}
+dl.facts dt,
+dl.facts dd {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hair);
 }
 dl.facts dt {
   color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding-right: 18px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
 }
 dl.facts dd {
   margin: 0;
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
 }
 .open {
@@ -540,16 +660,23 @@ dl.facts dd {
   gap: 6px;
 }
 .detail h3 {
-  margin: 0;
-  font-size: 12.5px;
+  margin: 0 0 2px;
+  font-size: 10.5px;
   font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--ink-2);
   display: flex;
-  gap: 6px;
-  align-items: baseline;
+  gap: 8px;
+  align-items: center;
 }
 .detail h3 .n {
+  font: 600 11px / 1 var(--mono);
+  letter-spacing: 0;
   color: var(--accent);
+  background: var(--tint);
+  padding: 3px 6px;
+  border-radius: 99px;
   font-variant-numeric: tabular-nums;
 }
 .links,
@@ -561,11 +688,26 @@ dl.facts dd {
   display: grid;
   gap: 1px;
 }
+.links {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 2px 10px;
+}
 .links li {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  align-items: baseline;
+  gap: 8px;
   font-size: 13px;
+  padding: 4px 8px;
+  margin: 0 -8px;
+  border-radius: 7px;
+}
+.links li:hover {
+  background: var(--wash);
+}
+.links li .meta {
+  font: 11px var(--mono);
+  white-space: nowrap;
 }
 .links button {
   text-align: left;

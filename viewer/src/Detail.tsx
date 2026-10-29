@@ -274,12 +274,17 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
   const text = (k: string) => (typeof a?.[k] === "string" ? (a[k] as string) : undefined);
   return (
     <aside className="detail" ref={ref}>
-      <header>
-        <span className={`dot role-${n.role}`} />
+      <header className={`role-${n.role}`}>
+        <span className="kind">
+          <span className="dot" />
+          {n.kind ?? n.role}
+        </span>
         <h2>{n.label}</h2>
-        <span className="meta">{n.role}</span>
+        <p className="path">{n.id}</p>
       </header>
-      <p className="path">{n.id}</p>
+      {n.line && !(text("description") ?? text("about") ?? text("blurb")) && (
+        <p className="lead">{n.line}</p>
+      )}
       {n.drift && <p className={`drift drift-${n.drift}`}>{DRIFT[n.drift]}</p>}
       <dl className="facts">
         {n.tables !== undefined ? (

@@ -5,8 +5,10 @@ import type { TreeNode } from "../../src/view/types";
 const BODY = '"Figtree", system-ui, -apple-system, sans-serif';
 const LABEL = { font: `650 13.5px ${BODY}`, lh: 17 };
 const LINE = { font: `400 12px ${BODY}`, lh: 15 };
-const SUB_H = 16;
-const PAD = { x: 28, y: 14 };
+/** The role kicker over the label, and the stat footer under it. */
+const KICK_H = 17;
+const SUB_H = 19;
+const PAD = { x: 30, y: 22 };
 const W = { min: 150, max: 260 };
 
 let ctx: CanvasRenderingContext2D | null | undefined;
@@ -35,6 +37,9 @@ function rows(text: string, font: string, max: number, label: boolean): number {
 /** Fan-in widens a box, up to half again. */
 export const scaleOf = (fanIn: number) => 1 + Math.min(0.5, Math.log2(1 + fanIn) / 10);
 
+/** Room every box keeps right and below for a closed container's stacked sheets. */
+export const STACK = 5;
+
 /** `top`: room a shape keeps over the text (a drum's lid). */
 export function boxSize(n: TreeNode, fanIn: number, top = 0): Size {
   const s = scaleOf(fanIn);
@@ -44,20 +49,21 @@ export function boxSize(n: TreeNode, fanIn: number, top = 0): Size {
   const h =
     top +
     PAD.y +
+    KICK_H +
     rows(n.label, LABEL.font, inner, true) * LABEL.lh +
     SUB_H +
     (n.line ? rows(n.line, LINE.font, inner, false) * LINE.lh + 3 : 0);
-  return { w, h: Math.round(Math.max(52 * s, h)) };
+  return { w: w + STACK, h: Math.round(Math.max(64 * s, h)) + STACK };
 }
 
 /** An open container: its title and one-liner on top, its kids under. */
-export const ZONE: Pad = { top: 62, side: 18, bottom: 18 };
+export const ZONE: Pad = { top: 76, side: 22, bottom: 22 };
 
 /** The largest label font (px) that fits its box in up to 3 rows: zoomed-out labels grow to it, no further. */
 export function labelFit(n: TreeNode, w: number, h: number, top = 0): number {
   const at = width(n.label, LABEL.font);
-  const iw = (w - PAD.x) * 0.92;
-  const ih = h - PAD.y - top;
+  const iw = (w - STACK - PAD.x) * 0.92;
+  const ih = h - STACK - PAD.y - top;
   let best = 0;
   for (let r = 1; r <= 3; r++)
     best = Math.max(best, Math.min((13.5 * r * iw) / at, ih / (r * 1.25)));

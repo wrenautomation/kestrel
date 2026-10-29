@@ -18,7 +18,7 @@ import rough from "roughjs";
 import type { Drawable, Options } from "roughjs/bin/core";
 import type { TreeNode, ViewData } from "../../src/view/types";
 import { type Shown, shown } from "./layout";
-import { labelFit, ZONE } from "./size";
+import { labelFit, STACK, ZONE } from "./size";
 
 type BoxData = {
   n: TreeNode;
@@ -42,7 +42,7 @@ type LineData = {
 };
 
 /** Past this many lines a level reads as a hairball: draw them faint until a box is picked. */
-const FAINT_OVER = 60;
+const FAINT_OVER = 24;
 /** Fit never shrinks the map below this; the minimap shows the rest. */
 const FIT_MIN = 0.45;
 
@@ -51,13 +51,14 @@ const FIT_MIN = 0.45;
  * service, a dashed box holds other boxes. Rough.js (Excalidraw's renderer) draws it, kept low
  * so it reads formal. The seed comes from the id, so a box looks the same on every load.
  */
-type Shape = "rect" | "zone" | "pill" | "drum";
+type Shape = "rect" | "stack" | "zone" | "pill" | "drum";
+// A closed container is a stack of sheets; open, it is a dashed zone.
 const SHAPE: Record<string, Shape> = {
-  repo: "zone",
-  dir: "zone",
-  folder: "zone",
-  systems: "zone",
-  screens: "zone",
+  repo: "stack",
+  dir: "stack",
+  folder: "stack",
+  systems: "stack",
+  screens: "stack",
   service: "pill",
   db: "drum",
   schema: "drum",
@@ -100,8 +101,9 @@ const Sketch = memo(function Sketch({
     };
     const { fill: _, fillStyle: __, ...line } = o;
     const m = 1.5;
-    const W = w - 2 * m;
-    const H = h - 2 * m;
+    const open = shape === "zone";
+    const W = w - 2 * m - (open ? 0 : STACK);
+    const H = h - 2 * m - (open ? 0 : STACK);
     const at = (d: string) => sketch.path(d, o);
     let ds: Drawable[];
     if (shape === "pill") {
@@ -122,6 +124,11 @@ const Sketch = memo(function Sketch({
         ),
         sketch.path(`M${m},${top} A${rx},${ry} 0 0 0 ${m + W},${top}`, line),
       ];
+    } else if (shape === "stack") {
+      // Two sheets behind, offset down-right: it holds more.
+      const back = (d: number) =>
+        sketch.toPaths(sketch.rectangle(m + d, m + d, W, H, o)).map((q) => ({ ...q, back: true }));
+      return [...back(STACK), ...back(STACK / 2), ...sketch.toPaths(sketch.rectangle(m, m, W, H, o))];
     } else ds = [sketch.rectangle(m, m, W, H, o)];
     return ds.flatMap((d) => sketch.toPaths(d));
   }, [id, shape, w, h]);
@@ -129,7 +136,11 @@ const Sketch = memo(function Sketch({
     <svg className="sk" width={w} height={h} aria-hidden="true">
       {paths.map((p, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: fixed strokes of one shape
-        <path key={i} d={p.d} className={p.fill && p.fill !== "none" ? "f" : "s"} />
+        <path
+          key={i}
+          d={p.d}
+          className={`${p.fill && p.fill !== "none" ? "f" : "s"}${"back" in p ? " back" : ""}`}
+        />
       ))}
     </svg>
   );
@@ -147,6 +158,15 @@ function subOf(n: TreeNode, fanIn: number): string {
           : n.role;
   return fanIn ? `${what} · ${fanIn} in` : what;
 }
+
+/** The kicker word: what kind of thing the box is. */
+const KIND_WORD: Record<string, string> = { dir: "folder", db: "database", systems: "systems", screens: "screens" };
+const kindOf = (n: TreeNode) => n.kind ?? KIND_WORD[n.role] ?? n.role;
+/** No kicker when it only says the name again (systems, screens, database). */
+const kickOf = (n: TreeNode) => {
+  const k = kindOf(n);
+  return k === n.label.replace(/\/$/, "").toLowerCase() ? undefined : k;
+};
 
 /** Break after - . / only, never inside a word. */
 const Label = ({ text }: { text: string }) => (
@@ -181,7 +201,8 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
         width: w,
         height: h,
         ...(open ? { paddingTop: 10, height: h, justifyContent: "flex-start" } : {}),
-        ...(shape === "drum" ? { paddingTop: 2 * lid(h), paddingBottom: 2 } : {}),
+        ...(open ? {} : { paddingRight: 14 + STACK, paddingBottom: 10 + STACK }),
+        ...(shape === "drum" ? { paddingTop: 2 * lid(h) + 4 } : {}),
         ...(open
           ? {}
           : ({ "--fit": `${labelFit(n, w, h, shape === "drum" ? 16 : 0)}px` } as CSSProperties)),
@@ -191,9 +212,20 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
       <Sketch id={n.id} shape={shape} w={w} h={h} />
       <Handle type="target" position={Position.Left} className="h" />
       <div className="head" style={open ? { height: ZONE.top - 14 } : undefined}>
+        {(kickOf(n) || open) && (
+          <span className="kick">
+            {kickOf(n)}
+            {open && (
+              <span className="sub">
+                {kickOf(n) ? " · " : ""}
+                {subOf(n, data.fanIn)}
+              </span>
+            )}
+          </span>
+        )}
         <Label text={n.label} />
-        <span className="sub">{subOf(n, data.fanIn)}</span>
         {n.line && <span className="desc">{n.line}</span>}
+        {!open && <span className="sub">{subOf(n, data.fanIn)}</span>}
       </div>
       {data.folds && (
         <button
@@ -268,7 +300,7 @@ interface Props {
 /** A flat level fits no smaller than FIT_MIN, to keep labels readable; a frame with open boxes fits whole. */
 const fitOf = (folded: boolean) => ({
   padding: 0.12,
-  maxZoom: 1.1,
+  maxZoom: 1.6,
   minZoom: folded ? 0.04 : FIT_MIN,
 });
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -353,6 +385,9 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
     });
   }, [map, data]);
 
+  // Hover lights a box's lines as a selection does, without dimming the rest.
+  const [hover, setHover] = useState<string>();
+  const lit = sel ?? hover;
   const near = useMemo(() => {
     const s = new Set<string>();
     for (const e of lines) {
@@ -396,7 +431,7 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
   const edges = useMemo<Edge<LineData>[]>(
     () =>
       lines.flatMap((e) => {
-        const hot = !!sel && (e.from === sel || e.to === sel);
+        const hot = !!lit && (e.from === lit || e.to === lit);
         // A grid has no routed lines: the selected box's only, straight.
         if (e.grid && !hot) return [];
         return [
@@ -405,19 +440,21 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
             source: e.from,
             target: e.to,
             type: "line",
-            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+            ...(hot || e.crowd <= FAINT_OVER
+              ? { markerEnd: { type: MarkerType.ArrowClosed, width: 11, height: 11 } }
+              : {}),
             data: {
               points: e.points,
               n: e.n,
               type: e.type,
               hot,
               dim: !!sel && !hot,
-              faint: !sel && e.crowd > FAINT_OVER,
+              faint: !hot && e.crowd > FAINT_OVER,
             },
           },
         ];
       }),
-    [lines, sel],
+    [lines, sel, lit],
   );
 
   // Arrows move the selection to the nearest box that way.
@@ -497,13 +534,17 @@ export function Canvas({ data, focus, fold, sel, onSelect, onToggle }: Props) {
         onNodeClick={(_, n) => onSelect(n.id === sel ? undefined : n.id)}
         onNodeDoubleClick={(_, n) => data.levels[n.id] && onToggle(n.id, !n.data.open)}
         onPaneClick={() => onSelect(undefined)}
+        onNodeMouseEnter={(_, n) => !n.data.open && setHover(n.id)}
+        onNodeMouseLeave={() => setHover(undefined)}
       >
         <ZoomVar />
         {map.boxes.length > 12 && (
           <MiniMap
             pannable
             zoomable
-            nodeClassName={(n) => `mm role-${(n.data as BoxData).n.role}`}
+            nodeClassName={(n) =>
+              `mm role-${(n.data as BoxData).n.role}${(n.data as BoxData).open ? " mm-zone" : ""}`
+            }
           />
         )}
       </ReactFlow>
