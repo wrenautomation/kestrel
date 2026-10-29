@@ -53,7 +53,13 @@ export function diff(approved: Graph, current: Graph): Change[] {
     (n) => n.id,
     (n) => n.group,
   );
-  side("edge", approved.edges, current.edges, edgeId, (e) => groupOf.get(e.from) ?? "_");
+  side(
+    "edge",
+    approved.edges,
+    current.edges,
+    edgeId,
+    (e) => groupOf.get(e.from) ?? groupOf.get(e.to) ?? "_",
+  );
   return out.sort((x, y) => (x.group + x.id < y.group + y.id ? -1 : 1));
 }
 

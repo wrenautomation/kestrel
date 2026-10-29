@@ -7,7 +7,7 @@ import type { Graph } from "../graph.js";
 import { api } from "./api.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
-import { seams, systems } from "./systems.js";
+import { routeLinks, seams, systems } from "./systems.js";
 import { readStory, screenCalls } from "./ui.js";
 import { headerLine } from "./workspace.js";
 
@@ -58,6 +58,7 @@ export const desk = restate.service({
     who: async (ctx: unknown) => api.who(),
     log: async (ctx: unknown) => { api.log(); touch(); },
     wrapped: wrap(api.add),
+    ping: async (ctx: unknown) => [fetch(\`https://api.example.com/v1/\${1}\`), "https://page.example.com/in/x"],
   },
 });
 `,
@@ -150,6 +151,9 @@ describe("routes", () => {
     expect(of("add")).toEqual(["writes table:public.leads"]);
     expect(of("who")).toEqual(["reads table:auth.user", "reads table:public.leads"]);
     expect(of("wrapped")).toEqual(["writes table:public.leads"]);
+    expect(g.nodes.find((n) => n.id === "route:Desk/ping")?.attrs?.hosts).toEqual([
+      "api.example.com",
+    ]);
     expect(of("log")).toEqual(["reads table:auth.user", "writes table:public.events"]);
   });
 
@@ -451,5 +455,21 @@ describe("headerLine", () => {
   });
   it("skips a doc comment that is not at the top", () => {
     expect(headerLine('import x from "x";\n/** A. */\nexport const a = 1;')).toBeUndefined();
+  });
+});
+
+describe("systems routeLinks", () => {
+  it("gives a uses edge from a route to each package the import map names", () => {
+    const routes: Graph = {
+      layer: "routes",
+      nodes: [
+        { id: "route:Pay/charge", role: "route", group: "pay", attrs: { npm: ["stripe", "yaml"] } },
+        { id: "route:Pay/list", role: "route", group: "pay", attrs: {} },
+      ],
+      edges: [],
+    };
+    expect(routeLinks(routes, { stripe: "stripe", "@acme": "acme" })).toEqual([
+      { from: "route:Pay/charge", to: "stripe", kind: "uses", title: "npm `stripe`" },
+    ]);
   });
 });

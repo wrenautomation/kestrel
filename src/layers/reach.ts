@@ -1,25 +1,47 @@
 /**
- * The tables a handler reaches: a drizzle table it names (`from(leads)`, `insert(leads)`), or one
+ * What a handler reaches. Tables: a drizzle table it names (`from(leads)`, `insert(leads)`), or one
  * a SQL text names (`sql\`select … from leads\``), in its own body or in any repo function it
  * calls or passes by name, read through to the end. Each function is read once (memo); a cycle reads what it has.
  * A call the checker cannot pin to a body (an injected dep's method, a parameter) ends the walk:
  * those tables are missed. `write`: an insert, update or delete of it.
  * Table ids are the schema layer's (`table:<schema>.<name>`); a name it lacks is left out.
+ * Outside: `npm`, each package a reached call resolves into (its declaration in node_modules);
+ * `hosts`, each URL host in a string that is sent: a fetch-like call's first argument, or a
+ * const named like a base URL (a link built for a page is not a call). The systems layer maps packages to systems.
  */
 import { Node, type Project, SyntaxKind, type Node as TsNode } from "ts-morph";
 
-/** Table id → whether something writes it. */
-export type Touch = Map<string, boolean>;
+export interface Reach {
+  /** Table id → whether something writes it. */
+  tables: Map<string, boolean>;
+  npm: Set<string>;
+  hosts: Set<string>;
+}
 
 const TABLE_CALL = /^(?:pgTable|pgView|pgMaterializedView|(\w+)\.(?:table|view|materializedView))$/;
 const SQL = /\b(?:select|insert|update|delete|with)\b/i;
 const SQL_TABLE =
   /\b(delete\s+from|from|join|into|update)\s+((?:"?[a-z_][\w]*"?\.)?"?[a-z_][\w]*"?)/gi;
 const WRITE_CALL = /^(?:insert|update|delete)$/;
+const HOST = /\bhttps?:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi;
+const SENDS = /^(?:fetch|request|get|post|put|patch|delete|send)$/i;
+const BASE = /(?:url|base|endpoint|api|host)$/i;
+/** Whether a string literal is sent (see the header). */
+const sent = (n: TsNode) => {
+  const p = n.getParent();
+  if (Node.isCallExpression(p) && p.getArguments()[0] === n) {
+    const c = p.getExpression();
+    const name = Node.isPropertyAccessExpression(c) ? c.getName() : c.getText();
+    return SENDS.test(name);
+  }
+  return Node.isVariableDeclaration(p) && BASE.test(p.getName());
+};
+/** The package a node_modules path is in: the last `node_modules/` (pnpm nests them). */
+const PKG = /.*\/node_modules\/((?:@[^/]+\/)?[^/]+)\//;
 
 type Fn = TsNode;
 
-export function tableReader(project: Project, tables: ReadonlySet<string>) {
+export function reader(project: Project, tables: ReadonlySet<string>) {
   // drizzle declarations: the const that holds the table → its id
   const byDecl = new Map<TsNode, string>();
   const names = new Set<string>();
@@ -55,6 +77,12 @@ export function tableReader(project: Project, tables: ReadonlySet<string>) {
     const f = d.getSourceFile();
     return !f.isDeclarationFile() && !f.getFilePath().includes("/node_modules/");
   };
+  const pkgOf = (d: TsNode | undefined) => {
+    const p = d && PKG.exec(d.getSourceFile().getFilePath())?.[1];
+    return p && p !== "typescript" && !p.startsWith("@types/") && !p.endsWith("-types")
+      ? p
+      : undefined;
+  };
   /** The function a declaration names: itself, a const's or a property's value, a wrapper's last function. */
   const bodyOf = (d: TsNode | undefined, depth = 0): Fn | undefined => {
     if (!d || depth > 3 || !own(d)) return undefined;
@@ -82,25 +110,29 @@ export function tableReader(project: Project, tables: ReadonlySet<string>) {
     return undefined;
   };
 
-  const memo = new Map<Fn, Touch>();
-  const sqlTables = (text: string, out: Touch) => {
+  const memo = new Map<Fn, Reach>();
+  const strings = (text: string, out: Reach, at: TsNode) => {
+    if (sent(at))
+      for (const m of text.matchAll(HOST)) out.hosts.add((m[1] as string).toLowerCase());
     if (!SQL.test(text)) return;
     for (const m of text.matchAll(SQL_TABLE)) {
       const raw = (m[2] as string).replace(/"/g, "").toLowerCase();
       const id = `table:${raw.includes(".") ? raw : `public.${raw}`}`;
       if (!tables.has(id)) continue;
       const w = !/^(?:from|join)$/i.test(m[1] as string);
-      out.set(id, (out.get(id) ?? false) || w);
+      out.tables.set(id, (out.tables.get(id) ?? false) || w);
     }
   };
-  const merge = (out: Touch, from: Touch) => {
-    for (const [k, w] of from) out.set(k, (out.get(k) ?? false) || w);
+  const merge = (out: Reach, from: Reach) => {
+    for (const [k, w] of from.tables) out.tables.set(k, (out.tables.get(k) ?? false) || w);
+    for (const p of from.npm) out.npm.add(p);
+    for (const h of from.hosts) out.hosts.add(h);
   };
 
-  const read = (fn: Fn): Touch => {
+  const read = (fn: Fn): Reach => {
     const got = memo.get(fn);
     if (got) return got;
-    const out: Touch = new Map();
+    const out: Reach = { tables: new Map(), npm: new Set(), hosts: new Set() };
     memo.set(fn, out);
     const visit = (n: TsNode) => {
       if (Node.isIdentifier(n)) {
@@ -111,15 +143,16 @@ export function tableReader(project: Project, tables: ReadonlySet<string>) {
         const call = n.getParentIfKind(SyntaxKind.CallExpression);
         const callee = call?.getExpression();
         const verb = callee && Node.isPropertyAccessExpression(callee) ? callee.getName() : "";
-        out.set(id, (out.get(id) ?? false) || WRITE_CALL.test(verb));
+        out.tables.set(id, (out.tables.get(id) ?? false) || WRITE_CALL.test(verb));
       } else if (Node.isNoSubstitutionTemplateLiteral(n) || Node.isStringLiteral(n)) {
-        sqlTables(n.getLiteralText(), out);
+        strings(n.getLiteralText(), out, n);
       } else if (Node.isTemplateExpression(n)) {
-        sqlTables(
+        strings(
           [n.getHead(), ...n.getTemplateSpans().map((s) => s.getLiteral())]
             .map((p) => p.getLiteralText())
             .join(" "),
           out,
+          n,
         );
       } else if (Node.isCallExpression(n) || Node.isNewExpression(n)) {
         // the callee, and a function passed by name (`read(api.accounts)`): it is called in there
@@ -130,8 +163,11 @@ export function tableReader(project: Project, tables: ReadonlySet<string>) {
             !Node.isPropertyAccessExpression(e)
           )
             continue;
-          const body = bodyOf(declOf(e));
+          const d = declOf(e);
+          const body = bodyOf(d);
           if (body && body !== fn) merge(out, read(body));
+          const pkg = e === n.getExpression() ? pkgOf(d) : undefined;
+          if (pkg) out.npm.add(pkg);
         }
       }
     };

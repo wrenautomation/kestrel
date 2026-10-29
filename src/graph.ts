@@ -94,7 +94,8 @@ export function byGroup(g: Graph): Map<string, Graph> {
     groupOf.set(n.id, n.group);
     part(n.group).nodes.push(n);
   }
-  for (const e of g.edges) part(groupOf.get(e.from) ?? "_").edges.push(e);
+  // a source from another layer (a route): the target's group
+  for (const e of g.edges) part(groupOf.get(e.from) ?? groupOf.get(e.to) ?? "_").edges.push(e);
   return out;
 }
 

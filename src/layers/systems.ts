@@ -8,7 +8,8 @@
  * systemd unit). A unit's bundle is every file the imports graph reaches from its entry, type-only
  * imports left out. A fact in a bundled file is a link from that unit: an env var the residue
  * maps to a target, an import of a vendor SDK or a sibling repo's package, a Restate service it
- * serves. The file is the link's `here`.
+ * serves. The file is the link's `here`. A route's own packages (routes attr `npm`) that map to a
+ * target give a `uses` edge from the route itself.
  *
  * Ids: `system:<id>` for a repo or vendor, `system:<repo>.<kind>:<name>` for a unit. Edge kinds:
  * `calls` (env), `uses` (import, package dep), `binds` (Worker binding), `invokes` (Restate).
@@ -265,6 +266,18 @@ export interface Facts {
   imports: Readonly<Record<string, string>>;
 }
 
+/** Route → target for each route package the import map names. */
+export function routeLinks(routes: Graph | null, imports: Facts["imports"]): Link[] {
+  const prefixes = Object.entries(imports).sort((a, b) => b[0].length - a[0].length);
+  const out: Link[] = [];
+  for (const r of routes?.nodes ?? [])
+    for (const p of (r.attrs?.npm as string[] | undefined) ?? []) {
+      const hit = prefixes.find(([k]) => p === k || p.startsWith(k.endsWith("/") ? k : `${k}/`));
+      if (hit) out.push({ from: r.id, to: hit[1], kind: "uses", title: `npm ${tick(p)}` });
+    }
+  return out;
+}
+
 /** Links from each unit with an entry to what its bundled files name. */
 export function factLinks(
   units: readonly Unit[],
@@ -436,7 +449,7 @@ export function assemble(
   const loose = new Set<string>();
   const pairs = new Map<string, { e: Edge; title: Set<string>; here: Set<string> }>();
   for (const l of links) {
-    const from = known.get(l.from);
+    const from = known.get(l.from) ?? (l.from.startsWith("route:") ? l.from : undefined);
     const to = known.get(l.to);
     if (!from || !to) {
       loose.add(`${l.from} → ${l.to} (${l.title})`);
@@ -501,6 +514,7 @@ async function extract(ctx: LayerContext): Promise<Graph> {
       text.set(p, await readFile(join(ctx.root, p), "utf8").catch(() => "")),
     ),
   );
+  const routes = await ctx.prior("routes");
   const facts = {
     env: cfg.env,
     aliases: await aliasesOf(ctx.root, cfg),
@@ -516,7 +530,8 @@ async function extract(ctx: LayerContext): Promise<Graph> {
       facts,
       new Set(cfg.settings ? [cfg.settings.file] : []),
     ),
-    ...(cfg.restate ? restateLinks(units, imports, await ctx.prior("routes"), cfg.restate) : []),
+    ...(cfg.restate ? restateLinks(units, imports, routes, cfg.restate) : []),
+    ...routeLinks(routes, facts.imports),
     ...repoLinks(repos),
   ];
   const { graph, loose } = assemble(repo, units, repos, links, cfg);
@@ -569,7 +584,8 @@ function page(g: Graph): Record<string, string> {
     L.push("## Links", "");
     for (const e of g.edges) {
       const titles = (e.attrs?.title as readonly string[] | undefined) ?? [];
-      L.push(`- ${e.from.slice(7)} ${e.kind} ${e.to.slice(7)}: ${titles.join(", ")}`);
+      const bare = (id: string) => id.replace(/^system:/, "");
+      L.push(`- ${bare(e.from)} ${e.kind} ${bare(e.to)}: ${titles.join(", ")}`);
       if (code(e.attrs?.here)) L.push(`  - in ${code(e.attrs?.here)}`);
     }
     L.push("");

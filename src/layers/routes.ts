@@ -6,8 +6,9 @@
  * A spread in `handlers` (`...viewAsHandlers(api)`) is read through: the object a const holds or
  * a function returns.
  * Nodes: `service`, and a `route` per handler (attrs: input and output type text). Edges:
- * route → table, `reads` or `writes` (./tables.ts), when the schema layer runs; calls between
- * services are the `systems` layer's.
+ * route → table, `reads` or `writes` (./reach.ts), when the schema layer runs; calls between
+ * services are the `systems` layer's. Route attrs `npm` and `hosts`: what it calls outside. A
+ * package more than a quarter of the routes reach is the stack (the SDK, the ORM), left out.
  */
 import { relative } from "node:path";
 import {
@@ -23,7 +24,7 @@ import {
 } from "ts-morph";
 import type { Edge, Graph, Node } from "../graph.js";
 import type { Layer } from "./layer.js";
-import { tableReader } from "./tables.js";
+import { reader } from "./reach.js";
 import { flat, packages, pkgSections, SOURCE, tsProject } from "./workspace.js";
 
 const REGISTER = /^(?:restate\.)?(service|object|workflow)$/;
@@ -101,6 +102,9 @@ function members(obj: ObjectLiteralExpression, depth = 0): ObjectLiteralElementL
   });
 }
 
+/** Share of routes past which a package is the stack, not a dependency of one route. */
+const STACK = 0.25;
+
 const tableIds = (schema: Graph | null) =>
   (schema?.nodes ?? []).filter((n) => n.role === "table").map((n) => n.id);
 
@@ -147,7 +151,7 @@ export const routes: Layer = {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
     const tables = tableIds(await prior("schema"));
-    const read = tables.length ? tableReader(project, new Set(tables)) : undefined;
+    const read = reader(project, new Set(tables));
     for (const file of project.getSourceFiles()) {
       const path = relative(root, file.getFilePath());
       const pkg = ownerOf(path);
@@ -210,10 +214,26 @@ export const routes: Layer = {
           });
           // no inline function (`read(api.accounts)`): the walk starts at the value
           const body = TsNode.isMethodDeclaration(h) ? h : (fn ?? value);
-          for (const [to, write] of body && read ? read(body) : [])
+          const r = body ? read(body) : undefined;
+          for (const [to, write] of r?.tables ?? [])
             edges.push({ from: id, to, kind: write ? "writes" : "reads" });
+          const route = nodes.at(-1) as Node;
+          if (r?.npm.size) route.attrs = { ...route.attrs, npm: [...r.npm].sort() };
+          if (r?.hosts.size) route.attrs = { ...route.attrs, hosts: [...r.hosts].sort() };
         }
       }
+    }
+    const reached = new Map<string, number>();
+    const all = nodes.filter((n) => n.role === "route");
+    for (const n of all)
+      for (const p of (n.attrs?.npm as string[] | undefined) ?? [])
+        reached.set(p, (reached.get(p) ?? 0) + 1);
+    for (const n of all) {
+      const npm = ((n.attrs?.npm as string[] | undefined) ?? []).filter(
+        (p) => (reached.get(p) ?? 0) <= all.length * STACK,
+      );
+      const { npm: _, ...rest } = n.attrs ?? {};
+      n.attrs = npm.length ? { ...rest, npm } : rest;
     }
     edges.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
     return { layer: "routes", nodes, edges };
@@ -246,8 +266,13 @@ function page(g: Graph): Record<string, string> {
       ]
         .filter(Boolean)
         .join("; ");
+      const list = (k: string) => ((r.attrs?.[k] as string[] | undefined) ?? []).join(", ");
+      const out = [list("npm") && `npm ${list("npm")}`, list("hosts") && `hosts ${list("hosts")}`]
+        .filter(Boolean)
+        .join("; ");
       lines.push(
         `- **${name}** ${tick(r.attrs?.input)} → ${tick(r.attrs?.output)} (${r.attrs?.wrap})${db ? `: ${db}` : ""}`,
+        ...(out ? [`  - outside: ${out}`] : []),
       );
     }
     lines.push("");
