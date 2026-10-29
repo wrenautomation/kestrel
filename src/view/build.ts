@@ -9,6 +9,7 @@ import type { Cost } from "../cost.js";
 import { diff } from "../diff.js";
 import { type Edge, edgeId, type Graph, type Node } from "../graph.js";
 import { implied } from "./reduce.js";
+import { slices } from "./slice.js";
 import type {
   CardView,
   Detail,
@@ -345,6 +346,22 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     });
     index.push({ name: `${s.svc.name}/${name}`, kind: "route", box: s.box });
   }
+
+  // A screen's slice: a route goes to its service's file box, a table or system to its own box.
+  const routeBox = new Map<string, string>();
+  for (const n of routes?.nodes ?? []) {
+    const s = n.role === "route" && n.parent ? services.get(n.parent) : undefined;
+    if (s) routeBox.set(n.id, s.box);
+  }
+  for (const [id, sl] of slices(
+    {
+      ui: input.current.ui ?? null,
+      routes: routes ?? null,
+      systems: input.current.systems ?? null,
+    },
+    (id) => routeBox.get(id) ?? (nodes[id] ? id : undefined),
+  ))
+    if (nodes[id]) detail(id).slice = sl;
 
   // Each box's chain from the repo, for lifting edges and counting.
   const chain = (id: string): string[] => {

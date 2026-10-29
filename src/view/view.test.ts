@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Edge, Graph, Node } from "../graph.js";
 import { fromDump } from "../layers/ui.js";
 import { buildView, GRID_OVER } from "./build.js";
+import { slices } from "./slice.js";
 
 const pkg = (id: string, dir: string): Node => ({ id, role: "package", group: id, attrs: { dir } });
 const file = (p: string, rel: string): Node => ({
@@ -274,5 +275,82 @@ describe("buildView", () => {
       ],
     });
     expect(v.counts.screens).toBe(2);
+  });
+});
+
+describe("slices", () => {
+  const g = (layer: string, nodes: Graph["nodes"], edges: Graph["edges"]): Graph => ({
+    layer,
+    nodes,
+    edges,
+  });
+  const screen = (id: string, attrs = {}) => ({ id, role: "screen", group: "a", attrs });
+  const ui = g(
+    "ui",
+    [
+      screen("ui:a/one"),
+      ...["two", "three", "four"].map((x) => screen(`ui:a/${x}`)),
+      screen("ui:a/rec", { record: "r" }),
+    ],
+    [
+      { from: "ui:a/one", to: "route:Pay/charge", kind: "calls", attrs: { at: ["one.tsx"] } },
+      ...["two", "three", "four"].map((x) => ({
+        from: `ui:a/${x}`,
+        to: "route:Pay/list",
+        kind: "calls",
+      })),
+      { from: "ui:a/rec", to: "table:public.r_view", kind: "reads" },
+    ],
+  );
+  const routes = g(
+    "routes",
+    [
+      {
+        id: "route:Pay/charge",
+        role: "route",
+        group: "p",
+        attrs: { npm: ["stripe", "yaml"], hosts: ["api.x.com"] },
+      },
+      { id: "route:Pay/list", role: "route", group: "p" },
+    ],
+    [
+      { from: "route:Pay/charge", to: "table:public.clients", kind: "reads" },
+      { from: "route:Pay/charge", to: "table:public.charges", kind: "reads" },
+      { from: "route:Pay/charge", to: "table:public.charges", kind: "writes" },
+      { from: "route:Pay/list", to: "table:public.clients", kind: "reads" },
+    ],
+  );
+  const systems = g(
+    "systems",
+    [],
+    [
+      {
+        from: "route:Pay/charge",
+        to: "system:stripe",
+        kind: "uses",
+        attrs: { title: ["npm `stripe`"] },
+      },
+    ],
+  );
+  const out = slices({ ui, routes, systems }, (id) =>
+    id.startsWith("route:") ? "file:pay.ts" : undefined,
+  );
+
+  it("gives a screen its calls, the tables behind them and what they reach outside", () => {
+    const one = out.get("ui:a/one");
+    expect(one?.calls).toEqual([
+      { id: "route:Pay/charge", name: "Pay/charge", box: "file:pay.ts", at: ["one.tsx"] },
+    ]);
+    expect(one?.tables.map((t) => [t.label, t.kind, !!t.shared])).toEqual([
+      ["public.charges", "writes", false],
+      ["public.clients", "reads", true],
+    ]);
+    expect(one?.outside.map((o) => o.id)).toEqual(["host:api.x.com", "npm:yaml", "system:stripe"]);
+  });
+
+  it("gives a record screen its own view, never counted as shared", () => {
+    expect(out.get("ui:a/rec")?.tables).toEqual([
+      { id: "table:public.r_view", label: "public.r_view", kind: "reads", via: ["ui:a/rec"] },
+    ]);
   });
 });

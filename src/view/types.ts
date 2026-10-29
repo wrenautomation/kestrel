@@ -78,8 +78,43 @@ export interface Detail {
   stories?: StoryRef[];
   /** The cards that cover it, entity card first. */
   cards: CardRef[];
+  /** A screen's routes, tables and outside (view/slice.ts). */
+  slice?: Slice;
   /** What it cost to run over `days`, from `kestrel cost`: its own lines only. */
   cost?: { usd: number; days: number; lines: { source: string; key: string; usd: number }[] };
+}
+
+/** What a screen calls and what is behind it (view/slice.ts). */
+export interface Slice {
+  calls: SliceCall[];
+  tables: SliceItem[];
+  outside: SliceItem[];
+  /** Call literals no route answers: the service has no such route, or no service has the prefix. */
+  missing?: string[];
+  host?: string[];
+}
+
+export interface SliceCall {
+  /** `route:<Service>/<handler>`. */
+  id: string;
+  name: string;
+  /** The file box its service is registered in. */
+  box?: string;
+  /** Files the call is written in. */
+  at: string[];
+  /** Over a quarter of the sliced screens call it. */
+  shared?: true;
+}
+
+export interface SliceItem {
+  /** A table or system box id, or `npm:<pkg>`, `host:<host>`. */
+  id: string;
+  label: string;
+  kind: "reads" | "writes" | "system" | "npm" | "host";
+  box?: string;
+  /** The routes (or the screen itself, for a record's view) that reach it. */
+  via: string[];
+  shared?: true;
 }
 
 /** A story as a file's detail lists it; `box` is the story file's own box. */
