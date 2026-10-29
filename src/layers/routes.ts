@@ -146,6 +146,21 @@ const tableIds = (schema: Graph | null) =>
 const prop = (obj: TsNode, name: string) =>
   TsNode.isObjectLiteralExpression(obj) ? obj.getProperty(name) : undefined;
 
+/** A wrapper's literal options (`{ effect: "sends", ingressPrivate: true }`) as `key:value` tags. */
+function tagsOf(call: CallExpression): string[] {
+  const o = call.getArguments()[0];
+  if (!o || !TsNode.isObjectLiteralExpression(o)) return [];
+  return o.getProperties().flatMap((p) => {
+    if (!TsNode.isPropertyAssignment(p)) return [];
+    const v = p.getInitializer();
+    if (v && (TsNode.isStringLiteral(v) || TsNode.isNoSubstitutionTemplateLiteral(v)))
+      return [`${p.getName()}:${v.getLiteralText()}`];
+    if (v && (TsNode.isTrueLiteral(v) || TsNode.isFalseLiteral(v)))
+      return [`${p.getName()}:${v.getText()}`];
+    return [];
+  });
+}
+
 /** A wrapper's call: one object with a `name` and a `handlers` object, as Restate's own takes. */
 function wrapped(call: CallExpression): boolean {
   const arg = call.getArguments()[0];
@@ -256,13 +271,14 @@ export const routes: Layer = {
               : { input: "?", output: "?" };
           const wrap =
             value && TsNode.isCallExpression(value) ? value.getExpression().getText() : "plain";
+          const tags = value && TsNode.isCallExpression(value) ? tagsOf(value) : [];
           const id = `route:${sid.slice("service:".length)}/${h.getName()}`;
           nodes.push({
             id,
             role: "route",
             parent: sid,
             group: pkg.name,
-            attrs: { ...shape, wrap },
+            attrs: { ...shape, wrap, ...(tags.length ? { tags } : {}) },
           });
           // no inline function (`read(api.accounts)`): the walk starts at the value
           const body = TsNode.isMethodDeclaration(h) ? h : (fn ?? value);

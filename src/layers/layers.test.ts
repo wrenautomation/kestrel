@@ -75,7 +75,7 @@ const NAME = "Mail";
 export const svc = restate.service({
   name: NAME,
   handlers: {
-    send: serviceHandler({}, async (ctx: unknown, req: In): Promise<Out> => ({ ok: !!req })),
+    send: serviceHandler({ effect: "sends", private: true, n: 1 }, async (ctx: unknown, req: In): Promise<Out> => ({ ok: !!req })),
     ping: async (ctx: unknown): Promise<string> => "pong",
   },
 });
@@ -168,6 +168,7 @@ describe("routes", () => {
       input: "In",
       output: "Out",
       wrap: "serviceHandler",
+      tags: ["effect:sends", "private:true"],
     });
     expect(byId["route:Mail/ping"]?.attrs).toMatchObject({
       input: "void",
@@ -703,6 +704,87 @@ export function make(site: SiteClient, other: { call(a: string, b: string): unkn
     expect(calls("stranger")).toEqual([]);
   });
 
+  it("settles a wrapper's method param at each call into it", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    const f = project.createSourceFile(
+      "/v.ts",
+      `type SiteClient = { call(site: string, method: string): unknown };
+export function make(site: SiteClient) {
+  const call = (method: string) => site.call("x", method);
+  const via = (m: string) => call(m);
+  function named(m: string) { return site.call("x", m); }
+  return {
+    get: () => call("GET"),
+    post: () => call("POST"),
+    deep: () => via("GET"),
+    deepPost: () => via("POST"),
+    fn: () => named("GET"),
+    open: (m: string) => call(m),
+  };
+}`,
+    );
+    const read = reader(project, new Set(), new Set(), new Set(["SiteClient.call(_, !GET)"]));
+    const obj = f
+      .getFunctionOrThrow("make")
+      .getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)[0];
+    const calls = (k: string) => [
+      ...read(
+        obj
+          ?.getPropertyOrThrow(k)
+          .asKindOrThrow(SyntaxKind.PropertyAssignment)
+          .getInitializerOrThrow() as never,
+      ).calls,
+    ];
+    expect(calls("get")).toEqual([]);
+    expect(calls("post")).toEqual(["SiteClient.call(_, !GET)"]);
+    expect(calls("deep")).toEqual([]);
+    expect(calls("deepPost")).toEqual(["SiteClient.call(_, !GET)"]);
+    expect(calls("fn")).toEqual([]);
+    expect(calls("open")).toEqual(["SiteClient.call(_, !GET)"]);
+  });
+
+  it("reads a factory's API method alone, not the whole factory", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    const f = project.createSourceFile(
+      "/f.ts",
+      `type SiteClient = { call(site: string, method: string): unknown };
+declare function run(o: { step: () => unknown }): void;
+function api(site: SiteClient) {
+  const call = (m: string) => site.call("x", m);
+  const stop = () => call("POST");
+  const step = () => call("PUT");
+  return {
+    stop,
+    read: () => call("GET"),
+    passes: () => run({ step }),
+  };
+}
+export function make(site: SiteClient) {
+  const a = () => api(site);
+  return {
+    read: () => a().read(),
+    stop: () => a().stop(),
+    passes: () => a().passes(),
+  };
+}`,
+    );
+    const read = reader(project, new Set(), new Set(), new Set(["SiteClient.call(_, !GET)"]));
+    const obj = f
+      .getFunctionOrThrow("make")
+      .getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)[0];
+    const calls = (k: string) => [
+      ...read(
+        obj
+          ?.getPropertyOrThrow(k)
+          .asKindOrThrow(SyntaxKind.PropertyAssignment)
+          .getInitializerOrThrow() as never,
+      ).calls,
+    ];
+    expect(calls("read")).toEqual([]);
+    expect(calls("stop")).toEqual(["SiteClient.call(_, !GET)"]);
+    expect(calls("passes")).toEqual(["SiteClient.call(_, !GET)"]);
+  });
+
   it("parses watch specs: a name, a typed method, arg filters", () => {
     expect(watchOf("sendOnce")).toEqual({ spec: "sendOnce", name: "sendOnce", args: [] });
     expect(watchOf("SiteClient.call(_, !GET)")).toEqual({
@@ -725,6 +807,13 @@ describe("patterns", () => {
     expect(picks(rule, ["w"], [])).toBe(false);
     expect(picks({ when: { deps: ["db"] }, must: ["k"] }, ["db"], [])).toBe(true);
     expect(picks({ must: ["k"] }, [], [])).toBe(true);
+    expect(picks({ when: { tags: ["effect:sends"] }, must: ["k"] }, [], [], ["effect:sends"])).toBe(
+      true,
+    );
+    expect(picks({ when: { tags: ["effect:sends"] }, must: ["k"] }, [], ["w"], [])).toBe(false);
+    const both = { when: { tags: ["effect:sends"], reaches: ["w"] }, must: ["k"] };
+    expect(picks(both, [], ["w"], ["effect:sends"])).toBe(true);
+    expect(picks(both, [], [], ["effect:sends"])).toBe(false);
   });
   it("holds on one must and no never", () => {
     expect(holds(rule, ["w", "k2"])).toBe(true);

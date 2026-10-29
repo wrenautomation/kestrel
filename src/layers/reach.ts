@@ -11,7 +11,9 @@
  * `calls`: each entry in `watch` it calls, a pattern rule's facts (cards.ts `PatternRule`). A name
  * matches the callee's name, resolved or not (`withSendKey(…)`, `x.sendOnce(…)`). `Type.method`
  * also needs the receiver's type named `Type`; `(_, !GET)` filters literal arguments by place: `_`
- * any, `X` the literal X, `!X` anything but the literal X (a non-literal passes).
+ * any, `X` the literal X, `!X` anything but the literal X (a non-literal passes). An argument
+ * that is the walked function's own parameter is settled at each call into it, with the argument
+ * given there (`call("GET", p)` into a `call(method, …)` wrapper); at the root it passes.
  */
 import { Node, type Project, SyntaxKind, type Node as TsNode } from "ts-morph";
 
@@ -23,6 +25,18 @@ export interface Reach {
   /** Names in `keys` it reads: the deps fields a factory hands its routes (`deps.files`). */
   deps: Set<string>;
   calls: Set<string>;
+  /** Watches whose filtered args are this function's params: its callers settle them. */
+  open: Open[];
+}
+
+/** `at`: the argument's place in the call still to be checked. */
+interface Check {
+  at: number;
+  arg: Watch["args"][number];
+}
+interface Open {
+  spec: string;
+  checks: Check[];
 }
 
 const TABLE_CALL = /^(?:pgTable|pgView|pgMaterializedView|(\w+)\.(?:table|view|materializedView))$/;
@@ -185,7 +199,83 @@ export function reader(
     return out;
   };
 
+  /** A param of `fn` → its place; a nested named function's own param → `skip` (its callers settle it). */
+  const paramOf = (a: TsNode | undefined, fn: Fn): number | "skip" | undefined => {
+    const d = a && Node.isIdentifier(a) ? declOf(a) : undefined;
+    if (!d || !Node.isParameterDeclaration(d)) return undefined;
+    const owner = d.getParent();
+    if (owner === fn)
+      return Node.isFunctionLikeDeclaration(owner) ? owner.getParameters().indexOf(d) : undefined;
+    const named =
+      Node.isFunctionDeclaration(owner) ||
+      Node.isMethodDeclaration(owner) ||
+      Node.isVariableDeclaration(owner.getParent());
+    return named && owner.getAncestors().includes(fn) ? "skip" : undefined;
+  };
+  /** A watch's checks at one call: met, failed, still open on `fn`'s params, or skipped. */
+  const settle = (checks: Check[], args: TsNode[], fn: Fn): boolean | Check[] | "skip" => {
+    const open: Check[] = [];
+    for (const c of checks) {
+      const a = args[c.at];
+      const p = paramOf(a, fn);
+      if (p === "skip") return "skip";
+      if (p !== undefined) open.push({ at: p, arg: c.arg });
+      else if (!argOk(a, c.arg)) return false;
+    }
+    return open.length ? open : true;
+  };
+  const note = (out: Reach, spec: string, r: ReturnType<typeof settle>) => {
+    if (r === true) out.calls.add(spec);
+    else if (Array.isArray(r)) out.open.push({ spec, checks: r });
+  };
+
   const memo = new Map<Fn, Reach>();
+  /** Whether `obj` is the object literal `fn` returns: a factory's API. */
+  const returnedBy = (obj: TsNode | undefined, fn: Fn) => {
+    if (!obj || !Node.isObjectLiteralExpression(obj)) return false;
+    let at: TsNode | undefined = obj.getParent();
+    while (
+      at &&
+      (Node.isParenthesizedExpression(at) ||
+        Node.isAsExpression(at) ||
+        Node.isSatisfiesExpression(at))
+    )
+      at = at.getParent();
+    if (at === fn) return true;
+    return (
+      !!at &&
+      Node.isReturnStatement(at) &&
+      at.getFirstAncestor((a) => Node.isFunctionLikeDeclaration(a)) === fn
+    );
+  };
+  /**
+   * Read when called, not with `fn`: a nested named function (`const call = (m) => …`), or a
+   * method of the object `fn` returns (a factory's API: `ads(ctx).insights` reads `insights` alone).
+   */
+  const ownLater = (n: TsNode, fn: Fn) => {
+    if (Node.isFunctionDeclaration(n)) return true;
+    if (!Node.isArrowFunction(n) && !Node.isFunctionExpression(n) && !Node.isMethodDeclaration(n))
+      return false;
+    const p = n.getParent();
+    if (Node.isVariableDeclaration(p)) return true;
+    const obj = Node.isMethodDeclaration(n)
+      ? p
+      : Node.isPropertyAssignment(p)
+        ? p.getParent()
+        : undefined;
+    // a declared return type (`: ReplySender`) types `x.method` as the interface's: no body to read later
+    return returnedBy(obj, fn) && !(Node.isFunctionLikeDeclaration(fn) && fn.getReturnTypeNode());
+  };
+  /** A call's callee or argument: the call branch reads it. */
+  const isCallee = (r: TsNode) => {
+    const p = r.getParent();
+    const c = Node.isPropertyAccessExpression(p) && p.getNameNode() === r ? p : r;
+    const call = c.getParent();
+    return (
+      (Node.isCallExpression(call) || Node.isNewExpression(call)) &&
+      (call.getExpression() === c || (call.getArguments() ?? []).includes(c))
+    );
+  };
   const strings = (text: string, out: Reach, at: TsNode) => {
     if (sent(at))
       for (const m of text.matchAll(HOST)) out.hosts.add((m[1] as string).toLowerCase());
@@ -220,12 +310,27 @@ export function reader(
       hosts: new Set(),
       deps: new Set(),
       calls: new Set(),
+      open: [],
     };
     memo.set(fn, out);
     const visit = (n: TsNode) => {
       if (Node.isIdentifier(n)) {
         // by name only, no checker: the route's factory keeps its own fields
         if (keys.has(n.getText())) out.deps.add(n.getText());
+        // a function handed over in an object (`run({ step })`): read in, its args unknown
+        const p = n.getParent();
+        if (
+          (Node.isShorthandPropertyAssignment(p) ||
+            (Node.isPropertyAssignment(p) && p.getInitializer() === n)) &&
+          !returnedBy(p.getParent(), fn)
+        ) {
+          const body = bodyOf(Node.isShorthandPropertyAssignment(p) ? p : declOf(n));
+          if (body && body !== fn) {
+            const got = read(body);
+            merge(out, got);
+            for (const o of got.open) out.calls.add(o.spec);
+          }
+        }
         if (!names.has(n.getText())) return;
         const id = byDecl.get(declOf(n) as TsNode);
         if (!id) return;
@@ -253,8 +358,8 @@ export function reader(
             !(Node.isPropertyAccessExpression(c) && typeName(c.getExpression()) === w.type)
           )
             continue;
-          const args = n.getArguments() ?? [];
-          if (w.args.every((x, i) => argOk(args[i], x))) out.calls.add(w.spec);
+          const checks = w.args.flatMap((arg, at) => (arg.lit ? [{ at, arg }] : []));
+          note(out, w.spec, settle(checks, n.getArguments() ?? [], fn));
         }
         // the callee, and a function passed by name (`read(api.accounts)`): it is called in there
         for (const e of [n.getExpression(), ...(n.getArguments() ?? [])]) {
@@ -266,8 +371,23 @@ export function reader(
             continue;
           const d = declOf(e);
           const body = bodyOf(d);
-          if (body && body !== fn) merge(out, read(body));
-          if (body && e === n.getExpression()) for (const p of picks(body, n)) merge(out, read(p));
+          if (body && body !== fn) {
+            const got = read(body);
+            merge(out, got);
+            // passed by name: its args are unknown here
+            for (const o of got.open)
+              note(
+                out,
+                o.spec,
+                e === n.getExpression() ? settle(o.checks, n.getArguments() ?? [], fn) : true,
+              );
+          }
+          if (body && e === n.getExpression())
+            for (const p of picks(body, n)) {
+              const got = read(p);
+              merge(out, got);
+              for (const o of got.open) out.calls.add(o.spec);
+            }
           const pkg = e === n.getExpression() ? pkgOf(d) : undefined;
           if (pkg) out.npm.add(pkg);
         }
@@ -275,8 +395,38 @@ export function reader(
     };
     // a value root (`wrap(api.add)`) is a call itself
     visit(fn);
-    fn.forEachDescendant(visit);
+    const later: Fn[] = [];
+    fn.forEachDescendant((n, t) => {
+      if (n !== fn && ownLater(n, fn)) {
+        later.push(n);
+        t.skip();
+      } else visit(n);
+    });
+    // a nested function named but not called here (`run({ step })`): read in, its args unknown
+    for (const f of later) {
+      const name = Node.isFunctionDeclaration(f)
+        ? f.getNameNode()
+        : f.getParentIfKind(SyntaxKind.VariableDeclaration)?.getNameNode();
+      if (!name || !Node.isIdentifier(name)) continue;
+      const named = name.findReferencesAsNodes().some(
+        (r) =>
+          r !== name &&
+          r.getAncestors().includes(fn) &&
+          // `return { setStatus }`: the API names it; a caller reads it as `api.setStatus`
+          !returnedBy(r.getParent()?.getParent(), fn) &&
+          !later.some((l) => r.getAncestors().includes(l)) &&
+          !isCallee(r),
+      );
+      if (!named) continue;
+      const got = read(f);
+      merge(out, got);
+      for (const o of got.open) out.calls.add(o.spec);
+    }
     return out;
   };
-  return read;
+  // the root's own params are unknown: what is still open passes
+  return (root: Fn): Reach => {
+    const r = read(root);
+    return r.open.length ? { ...r, calls: new Set([...r.calls, ...r.open.map((o) => o.spec)]) } : r;
+  };
 }

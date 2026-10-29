@@ -11,15 +11,17 @@ import type { Layer } from "./layer.js";
 
 const list = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
 
-/** Whether `when` picks a route: it reads one of `deps` or calls one of `reaches`; none = every route. */
+/** Whether `when` picks a route: each kind given (`deps`, `reaches`, `tags`) has one match; none = every route. */
 export function picks(
   r: PatternRule,
   deps: readonly string[],
   reaches: readonly string[],
+  tags: readonly string[] = [],
 ): boolean {
-  const w = r.when;
-  if (!w || (!w.deps?.length && !w.reaches?.length)) return true;
-  return !!(w.deps?.some((d) => deps.includes(d)) || w.reaches?.some((n) => reaches.includes(n)));
+  const w = r.when ?? {};
+  const one = (want: string[] | undefined, have: readonly string[]) =>
+    !want?.length || want.some((x) => have.includes(x));
+  return one(w.deps, deps) && one(w.reaches, reaches) && one(w.tags, tags);
 }
 
 /** Whether a picked route holds: it calls one of `must` and none of `never`. */
@@ -39,7 +41,7 @@ export const patterns: Layer = {
       nodes.push({ id, role: "pattern", group: id.slice(8), attrs: { card: c.path } });
       for (const r of routes) {
         const reaches = list(r.attrs?.reaches);
-        if (!picks(c.rule, list(r.attrs?.deps), reaches)) continue;
+        if (!picks(c.rule, list(r.attrs?.deps), reaches, list(r.attrs?.tags))) continue;
         edges.push({ from: id, to: r.id, kind: holds(c.rule, reaches) ? "holds" : "breaks" });
       }
     }

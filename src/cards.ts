@@ -16,12 +16,17 @@ import { type Graph, type Node, normalize } from "./graph.js";
 /**
  * A pattern card's check, over each route's walk (layers/reach.ts): a route that `when` picks must
  * reach one of `must` and none of `never`. `deps`: the factory fields it reads; `reaches`: what it
- * calls, a name or `Type.method(args)` (layers/reach.ts). No `when`: every route.
+ * calls, a name or `Type.method(args)` (layers/reach.ts); `tags`: its wrapper's literal options
+ * (`effect:sends`). Each kind given needs one match. No `when`: every route.
  */
 export const PatternRule = z
   .object({
     when: z
-      .object({ deps: z.array(z.string()).optional(), reaches: z.array(z.string()).optional() })
+      .object({
+        deps: z.array(z.string()).optional(),
+        reaches: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+      })
       .optional(),
     must: z.array(z.string()).optional(),
     never: z.array(z.string()).optional(),
