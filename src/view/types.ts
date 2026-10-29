@@ -84,6 +84,8 @@ export interface Detail {
   slice?: Slice;
   /** A pattern: how many routes hold it, and each that breaks it. */
   pattern?: { holds: number; breaks: { route: string; box?: string }[] };
+  /** Its commits over the last `days`, from `kestrel recent`. */
+  recent?: { days: number; commits: number; added: number; removed: number };
   /** What it cost to run over `days`, from `kestrel cost`: its own lines only. */
   cost?: { usd: number; days: number; lines: { source: string; key: string; usd: number }[] };
 }

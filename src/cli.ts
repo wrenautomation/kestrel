@@ -9,6 +9,7 @@
  * kestrel health              signals: cycles, flat folders, fan, weak interfaces, clones, unused
  * kestrel packet [layer...]   what the last gen changes against approved, as one page
  * kestrel cost                spend per node, from the repo's dump; local only, never committed
+ * kestrel recent              where the last days' commits landed; local only
  */
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
@@ -43,6 +44,7 @@ import { LAYERS } from "./layers/index.js";
 import { seams } from "./layers/systems.js";
 import { packages, tsProject } from "./layers/workspace.js";
 import { packet } from "./packet.js";
+import { type Recent, readRecent, recentPage } from "./recent.js";
 import { fileStore } from "./store.js";
 import { buildView } from "./view/build.js";
 import { serve } from "./view/serve.js";
@@ -319,6 +321,7 @@ export async function viewData(root: string, configFile?: string) {
     })),
     require: config.cards?.require ?? [],
     cost: await readJson<Cost>(resolve(root, config.out, "cost.current.json")),
+    recent: await readJson<Recent>(resolve(root, config.out, "recent.current.json")),
     ...(config.layers.ui?.storybook ? { storybook: config.layers.ui.storybook } : {}),
   });
   return view;
@@ -423,6 +426,26 @@ export function program(): Command {
       });
       if (o.out) await writeFile(resolve(r, o.out), page);
       else process.stdout.write(page);
+    });
+  p.command("recent")
+    .description("write where the last days' commits landed; local only")
+    .option("-d, --days <n>", "days back", "14")
+    .action(async (o: { days: string }) => {
+      const r = root();
+      const config = await loadConfig(r, cfg().config);
+      const rec = await readRecent(
+        r,
+        await fileStore(r, config.out).read("imports", "current"),
+        Number(o.days),
+      );
+      const dir = resolve(r, config.out);
+      await writeFile(resolve(dir, "recent.current.json"), `${JSON.stringify(rec, null, 2)}\n`);
+      await writeFile(resolve(dir, "recent.md"), recentPage(rec));
+      const top = rec.packages[0];
+      console.log(
+        `recent: ${rec.commits} commits in ${rec.days} days` +
+          (top ? `, most in ${top.id} (${top.commits})` : ""),
+      );
     });
   p.command("cost")
     .description("write the cost report from the repo's dump; local only, never commit it")

@@ -368,6 +368,15 @@ export function Detail({ data, id, mark, onGo, onOpen }: Props) {
             </dd>
           </>
         )}
+        {d?.recent && (
+          <>
+            <dt>Recent</dt>
+            <dd>
+              {d.recent.commits} commit{d.recent.commits === 1 ? "" : "s"} in {d.recent.days} days,
+              +{d.recent.added} −{d.recent.removed}
+            </dd>
+          </>
+        )}
         {d?.cost && (
           <>
             <dt>Cost</dt>

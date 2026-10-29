@@ -8,6 +8,7 @@ import { basename } from "node:path";
 import type { Cost } from "../cost.js";
 import { diff } from "../diff.js";
 import { type Edge, edgeId, type Graph, type Node } from "../graph.js";
+import type { Recent } from "../recent.js";
 import { implied } from "./reduce.js";
 import { slices } from "./slice.js";
 import type {
@@ -33,6 +34,8 @@ export interface ViewInput {
   require?: readonly string[];
   /** `kestrel cost`'s stored report, when there is one. */
   cost?: Cost | null;
+  /** `kestrel recent`'s stored report, when there is one. */
+  recent?: Recent | null;
   storybook?: string;
 }
 
@@ -438,6 +441,27 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     d.cost ??= { usd: 0, days: input.cost?.days ?? 0, lines: [] };
     d.cost.usd += l.usd;
     d.cost.lines.push({ source: l.source, key: l.key, usd: l.usd });
+  }
+
+  const rec = input.recent;
+  if (rec) {
+    const put = (
+      box: string | undefined,
+      c: { commits: number; added: number; removed: number },
+    ) => {
+      if (box && nodes[box])
+        detail(box).recent = {
+          days: rec.days,
+          commits: c.commits,
+          added: c.added,
+          removed: c.removed,
+        };
+    };
+    for (const p of rec.packages) put(p.id, p);
+    for (const f of rec.files) {
+      const hit = dirs.find(([, d]) => d && f.path.startsWith(d));
+      if (hit) put(`${hit[0]}/${f.path.slice(hit[1].length)}`, f);
+    }
   }
 
   // Lift file → file imports: each edge sits on the one level where its ends part.
