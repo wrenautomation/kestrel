@@ -1197,3 +1197,17 @@ dialog::backdrop {
 .col.screen .meta a {
   color: var(--accent);
 }
+/* Alt+click: the parts under it, outermost first; the screen's own file marked */
+.col ol.chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+}
+.col ol.chain li + li {
+  padding-left: 18px;
+}
+.col ol.chain li.own {
+  background: var(--tint);
+}

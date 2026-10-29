@@ -9,6 +9,8 @@
  * route → table, `reads` or `writes` (./reach.ts), when the schema layer runs; calls between
  * services are the `systems` layer's. Route attrs `npm` and `hosts`: what it calls outside. A
  * package more than a quarter of the routes reach is the stack (the SDK, the ORM), left out.
+ * Service attr `factory`: the named function the registration sits in. Route attr `deps`: the
+ * fields of the factory's first parameter the route's walk names.
  */
 import { relative } from "node:path";
 import {
@@ -30,6 +32,37 @@ import { flat, packages, pkgSections, SOURCE, tsProject } from "./workspace.js";
 const REGISTER = /^(?:restate\.)?(service|object|workflow)$/;
 
 type Fn = ArrowFunction | FunctionExpression | FunctionDeclaration;
+
+/**
+ * The named function that registers a service (`makeNotesConsole`) and its first parameter's
+ * fields: the systems layer reads its calls.
+ */
+function factoryOf(call: CallExpression): { name: string; fields: Set<string> } | undefined {
+  const f = call.getFirstAncestor(
+    (n) =>
+      TsNode.isFunctionDeclaration(n) ||
+      TsNode.isArrowFunction(n) ||
+      TsNode.isFunctionExpression(n),
+  );
+  if (!f) return undefined;
+  const v = f.getParent();
+  const name = TsNode.isFunctionDeclaration(f)
+    ? f.getName()
+    : v && TsNode.isVariableDeclaration(v)
+      ? v.getName()
+      : undefined;
+  if (!name) return undefined;
+  const p = f.getParameters()[0];
+  return {
+    name,
+    fields: new Set(
+      p
+        ?.getType()
+        .getProperties()
+        .map((s) => s.getName()) ?? [],
+    ),
+  };
+}
 
 /** The handler function: the value itself, the last function argument of a wrapper, or a named one. */
 function handlerFn(v: Expression | undefined): Fn | undefined {
@@ -151,7 +184,14 @@ export const routes: Layer = {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
     const tables = tableIds(await prior("schema"));
-    const read = reader(project, new Set(tables));
+    // every factory's deps fields first: a shared function is read once, for all of them
+    const registers = (call: CallExpression) =>
+      Boolean((REGISTER.test(call.getExpression().getText()) || wrapped(call)) && nameOf(call));
+    const keys = new Set<string>();
+    for (const file of project.getSourceFiles())
+      for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression))
+        if (registers(call)) for (const k of factoryOf(call)?.fields ?? []) keys.add(k);
+    const read = reader(project, new Set(tables), keys);
     for (const file of project.getSourceFiles()) {
       const path = relative(root, file.getFilePath());
       const pkg = ownerOf(path);
@@ -166,12 +206,18 @@ export const routes: Layer = {
         const sid = nodes.some((n) => n.id === `service:${name}`)
           ? `service:${name}@${path}`
           : `service:${name}`;
+        const factory = factoryOf(call);
         nodes.push({
           id: sid,
           role: "service",
           parent: pkg.name,
           group: pkg.name,
-          attrs: { kind, file: path, ...(own ? {} : { via: callee }) },
+          attrs: {
+            kind,
+            file: path,
+            ...(own ? {} : { via: callee }),
+            ...(factory ? { factory: factory.name } : {}),
+          },
         });
         const handlers = prop(call.getArguments()[0] as TsNode, "handlers");
         const obj =
@@ -220,6 +266,8 @@ export const routes: Layer = {
           const route = nodes.at(-1) as Node;
           if (r?.npm.size) route.attrs = { ...route.attrs, npm: [...r.npm].sort() };
           if (r?.hosts.size) route.attrs = { ...route.attrs, hosts: [...r.hosts].sort() };
+          const deps = [...(r?.deps ?? [])].filter((k) => factory?.fields.has(k)).sort();
+          if (deps.length) route.attrs = { ...route.attrs, deps };
         }
       }
     }

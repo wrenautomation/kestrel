@@ -16,6 +16,8 @@ export interface Reach {
   tables: Map<string, boolean>;
   npm: Set<string>;
   hosts: Set<string>;
+  /** Names in `keys` it reads: the deps fields a factory hands its routes (`deps.files`). */
+  deps: Set<string>;
 }
 
 const TABLE_CALL = /^(?:pgTable|pgView|pgMaterializedView|(\w+)\.(?:table|view|materializedView))$/;
@@ -41,7 +43,12 @@ const PKG = /.*\/node_modules\/((?:@[^/]+\/)?[^/]+)\//;
 
 type Fn = TsNode;
 
-export function reader(project: Project, tables: ReadonlySet<string>) {
+export function reader(
+  project: Project,
+  tables: ReadonlySet<string>,
+  /** Deps field names to note when read (see `Reach.deps`). */
+  keys: ReadonlySet<string> = new Set(),
+) {
   // drizzle declarations: the const that holds the table → its id
   const byDecl = new Map<TsNode, string>();
   const names = new Set<string>();
@@ -110,6 +117,26 @@ export function reader(project: Project, tables: ReadonlySet<string>) {
     return undefined;
   };
 
+  /** `read("home")` into a body that calls `api[route]`: the literal picks `api.home`. */
+  const picks = (body: Fn, call: TsNode): Fn[] => {
+    if (!Node.isCallExpression(call) && !Node.isNewExpression(call)) return [];
+    if (!Node.isFunctionLikeDeclaration(body)) return [];
+    const params = body.getParameters();
+    const out: Fn[] = [];
+    for (const [i, a] of (call.getArguments() ?? []).entries()) {
+      const p = params[i];
+      if (!p || !(Node.isStringLiteral(a) || Node.isNoSubstitutionTemplateLiteral(a))) continue;
+      const name = p.getName();
+      for (const ea of body.getDescendantsOfKind(SyntaxKind.ElementAccessExpression)) {
+        if (ea.getArgumentExpression()?.getText() !== name) continue;
+        const prop = ea.getExpression().getType().getProperty(a.getLiteralText());
+        const fn = bodyOf(prop?.getDeclarations()[0]);
+        if (fn) out.push(fn);
+      }
+    }
+    return out;
+  };
+
   const memo = new Map<Fn, Reach>();
   const strings = (text: string, out: Reach, at: TsNode) => {
     if (sent(at))
@@ -127,15 +154,23 @@ export function reader(project: Project, tables: ReadonlySet<string>) {
     for (const [k, w] of from.tables) out.tables.set(k, (out.tables.get(k) ?? false) || w);
     for (const p of from.npm) out.npm.add(p);
     for (const h of from.hosts) out.hosts.add(h);
+    for (const k of from.deps) out.deps.add(k);
   };
 
-  const read = (fn: Fn): Reach => {
+  const read = (root: Fn): Reach => {
+    // a name (`rows: steps`): walk the function it names
+    const fn =
+      Node.isIdentifier(root) || Node.isPropertyAccessExpression(root)
+        ? (bodyOf(declOf(root)) ?? root)
+        : root;
     const got = memo.get(fn);
     if (got) return got;
-    const out: Reach = { tables: new Map(), npm: new Set(), hosts: new Set() };
+    const out: Reach = { tables: new Map(), npm: new Set(), hosts: new Set(), deps: new Set() };
     memo.set(fn, out);
     const visit = (n: TsNode) => {
       if (Node.isIdentifier(n)) {
+        // by name only, no checker: the route's factory keeps its own fields
+        if (keys.has(n.getText())) out.deps.add(n.getText());
         if (!names.has(n.getText())) return;
         const id = byDecl.get(declOf(n) as TsNode);
         if (!id) return;
@@ -166,6 +201,7 @@ export function reader(project: Project, tables: ReadonlySet<string>) {
           const d = declOf(e);
           const body = bodyOf(d);
           if (body && body !== fn) merge(out, read(body));
+          if (body && e === n.getExpression()) for (const p of picks(body, n)) merge(out, read(p));
           const pkg = e === n.getExpression() ? pkgOf(d) : undefined;
           if (pkg) out.npm.add(pkg);
         }

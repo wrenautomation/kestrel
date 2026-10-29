@@ -6,7 +6,9 @@ import type { SliceCall, SliceItem, ViewData } from "../../src/view/types";
  * touch, what they reach outside. Hover a call: the other columns keep what it reaches. Hover a
  * table or an outside item: the calls keep the ones that reach it. Shared items fold to the foot.
  * With a Storybook and a page story, the screen runs live in a frame; the story's fake server
- * posts each call's key (`{kestrel: "call", key}`), and the calls that ran are marked.
+ * posts each call's key (`{kestrel: "call", key}`), and the calls that ran are marked. Alt+click
+ * in it posts the parts under the click (`{kestrel: "source", chain}`, innermost first): they
+ * list under the frame, the screen's own file marked, each a link to its file.
  */
 interface Props {
   data: ViewData;
@@ -76,7 +78,7 @@ function Column<T extends { id: string; shared?: true }>({
   title: string;
   list: T[];
   row: (x: T) => React.ReactNode;
-  note?: string;
+  note?: string | undefined;
   /** Rows under a label each: a call's file. */
   group?: (x: T) => string;
 }) {
@@ -124,6 +126,19 @@ const storyName = (id: string) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+/** `<path>:<line>:<col>:<tag>`, innermost first → one per file run, outermost first. */
+export function sourceChain(
+  chain: readonly string[],
+): { path: string; line: string; tag: string }[] {
+  const out: { path: string; line: string; tag: string }[] = [];
+  for (const at of chain) {
+    const m = /^(.*?):(\d+):\d+:([^:/]*)$/.exec(at);
+    const it = m ? { path: m[1] as string, line: m[2] as string, tag: m[3] as string } : undefined;
+    if (it && out.at(-1)?.path !== it.path) out.push(it);
+  }
+  return out.reverse();
+}
+
 /** The file box of a repo path (or one under `root`), by its package's dir. */
 export function boxOfPath(data: ViewData, path: string): string | undefined {
   const rel = path.startsWith(`${data.root}/`) ? path.slice(data.root.length + 1) : path;
@@ -141,8 +156,8 @@ function Live({
   base: string;
   ids: string[];
   onCall: (key: string) => void;
-  /** Alt+click in the frame: `<path>:<line>:<col>:<tag>`. */
-  onSource: (at: string) => void;
+  /** Alt+click in the frame: `<path>:<line>:<col>:<tag>` per tagged part, innermost first. */
+  onSource: (chain: string[]) => void;
 }) {
   const [at, setAt] = useState(ids[0] as string);
   const box = useRef<HTMLDivElement>(null);
@@ -164,7 +179,10 @@ function Live({
     const on = (e: MessageEvent) => {
       if (e.origin !== origin) return;
       if (e.data?.kestrel === "call" && typeof e.data.key === "string") onCall(e.data.key);
-      if (e.data?.kestrel === "source" && typeof e.data.at === "string") onSource(e.data.at);
+      if (e.data?.kestrel !== "source") return;
+      const chain = Array.isArray(e.data.chain) ? e.data.chain : [e.data.at];
+      const ok = chain.filter((x: unknown): x is string => typeof x === "string");
+      if (ok.length) onSource(ok);
     };
     window.addEventListener("message", on);
     return () => window.removeEventListener("message", on);
@@ -201,7 +219,8 @@ function Live({
         >
           Open in Storybook
         </a>
-        . <kbd>Alt</kbd>+click a part: its file. Blank: run <code>storybook</code> in the repo.
+        . <kbd>Alt</kbd>+click a part: the files under it. Blank: run <code>storybook</code> in the
+        repo.
       </p>
     </>
   );
@@ -213,23 +232,19 @@ export function Slice({ data, id, onGo, onMap }: Props) {
   const sl = d?.slice;
   // a call id, or an item id: what the hover keeps lit
   const [hot, setHot] = useState<{ call?: string; item?: SliceItem }>({});
-  // call keys the live story sent; reset per screen
+  // call keys the live story sent, and the parts under the last Alt+click; reset per screen
   const [ran, setRan] = useState<ReadonlySet<string>>(new Set());
+  const [under, setUnder] = useState<string[]>([]);
   const [was, setWas] = useState(id);
   if (was !== id) {
     setWas(id);
     setRan(new Set());
+    setUnder([]);
   }
   const onCall = useRef((key: string) =>
     setRan((r) => (r.has(key) ? r : new Set([...r, key]))),
   ).current;
-  // the listener stays put; it reads the latest data and onGo
-  const now = useRef({ data, onGo });
-  now.current = { data, onGo };
-  const onSource = useRef((at: string) => {
-    const box = boxOfPath(now.current.data, at.replace(/(?::\d+){2}:[^:/]*$/, ""));
-    if (box) now.current.onGo(box);
-  }).current;
+  const onSource = useRef((chain: string[]) => setUnder(chain)).current;
   if (!n) return null;
   const live = data.storybook && sl?.stories?.length ? sl.stories : undefined;
   const known = new Set((sl?.calls ?? []).flatMap((c) => (c.path ? [c.path] : [])));
@@ -321,6 +336,26 @@ export function Slice({ data, id, onGo, onMap }: Props) {
           ) : (
             <p className="none">No story shows this screen alone.</p>
           )}
+          {under.length > 0 && (
+            <>
+              <h3>Under the click</h3>
+              <ol className="chain">
+                {sourceChain(under).map((p) => {
+                  const box = boxOfPath(data, p.path);
+                  return (
+                    <li key={p.path} className={p.path === file?.path ? "own" : undefined}>
+                      <button type="button" disabled={!box} onClick={() => box && onGo(box)}>
+                        <Wrap path={p.path} />
+                      </button>
+                      <span className="meta">
+                        {p.tag} line {p.line}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </>
+          )}
           <Lost title="No such route" list={sl?.missing} />
           <Lost title="The host answers" list={sl?.host} />
           <Lost title="Ran, not in this slice" list={extra} />
@@ -344,7 +379,12 @@ export function Slice({ data, id, onGo, onMap }: Props) {
             </li>
           )}
         />
-        <Column title="Tables" list={sl?.tables ?? []} row={item} />
+        <Column
+          title="Tables"
+          list={sl?.tables ?? []}
+          row={item}
+          note={a.record ? "No table: its rows come from code or from outside." : undefined}
+        />
         <Column title="Outside" list={sl?.outside ?? []} row={item} />
       </div>
     </div>

@@ -1,7 +1,7 @@
 /**
  * A screen's slice: the routes it calls, the tables behind them, what they reach outside. Calls
  * are the ui layer's `calls` edges; tables, the routes' `reads`/`writes` edges and a record
- * screen's own `reads`; outside, the systems layer's route `uses` edges and route attrs `npm` and
+ * screen's own `reads`; outside, the systems layer's route `uses` and `calls` edges, route attrs `npm` and
  * `hosts`; stories, the ui layer's `renders` edges. Shared: a call or table more than a quarter of the calling screens reach (the access
  * checks' tables, the session route), the same cut as the ui shell and the routes stack.
  */
@@ -27,8 +27,8 @@ export function slices(
       touch.set(e.from, [...(touch.get(e.from) ?? []), { to: e.to, write: e.kind === "writes" }]);
   const uses = new Map<string, string[]>();
   for (const e of systems?.edges ?? [])
-    if (e.kind === "uses" && e.from.startsWith("route:"))
-      uses.set(e.from, [...(uses.get(e.from) ?? []), e.to]);
+    if ((e.kind === "uses" || e.kind === "calls") && e.from.startsWith("route:"))
+      uses.set(e.from, [...new Set([...(uses.get(e.from) ?? []), e.to])]);
   const sysPkgs = new Map<string, Set<string>>();
   for (const e of systems?.edges ?? [])
     if (e.kind === "uses" && e.from.startsWith("route:"))
@@ -58,7 +58,15 @@ export function slices(
     const missing = list(s.attrs?.missing);
     const host = list(s.attrs?.host);
     const shown = stories.get(s.id) ?? [];
-    if (!c.length && !mine.length && !missing.length && !host.length && !shown.length) continue;
+    if (
+      !c.length &&
+      !mine.length &&
+      !missing.length &&
+      !host.length &&
+      !shown.length &&
+      !s.attrs?.record
+    )
+      continue;
     const tables = new Map<string, SliceItem>();
     const outside = new Map<string, SliceItem>();
     const put = (m: Map<string, SliceItem>, it: Omit<SliceItem, "via">, via: string) => {
@@ -71,6 +79,11 @@ export function slices(
       }
     };
     for (const t of mine) put(tables, { id: t, label: t.slice(6), kind: "reads" }, s.id);
+    // a record's rows read outside: an export API, a vendor package
+    for (const p of list(s.attrs?.npm))
+      put(outside, { id: `npm:${p}`, label: p, kind: "npm" }, s.id);
+    for (const h of list(s.attrs?.hosts))
+      put(outside, { id: `host:${h}`, label: h, kind: "host" }, s.id);
     for (const { to } of c) {
       for (const t of touch.get(to) ?? [])
         put(tables, { id: t.to, label: t.to.slice(6), kind: t.write ? "writes" : "reads" }, to);

@@ -4,7 +4,8 @@
  * Screens come from the repo's own dump command (`dump` in kestrel.json, run in the repo root):
  * a router built from data reads wrong statically, so the repo prints what it registers. It
  * prints `{areas: {<who>: [{id, label, apps}]}, apps: [{id, name, blurb, file, pages: [{id,
- * label, about?, group?, hidden?, template, record?, file?}]}], inputs?}`, paths from the repo root.
+ * label, about?, group?, hidden?, template, record?, file?}]}], home?, inputs?}`, paths from the
+ * repo root. `home`: apps of that shape at the root address `/`, one per workspace.
  * `inputs`: every file the dump read. Kept in the cache, they key the next gen, so the layer
  * reruns only when one changes; `inputs` in kestrel.json overrides them.
  * Stories are read statically from CSF files: the default export's `title` and `id`, and the
@@ -24,7 +25,9 @@
  * answers it, or a typo).
  * Edges `reads`: record screen → table. Each `<records>({id, view, activity?: {view}})` call in the
  * packages (`layers.ui.records`) names a kind's views; the checker reads a const id. A view with
- * no schema is `public`. A kind's `rows` function: the tables it reaches (./reach.ts).
+ * no schema is `public`. A kind's `rows` function: the tables it reaches (./reach.ts); what it
+ * reaches outside, screen attrs `hosts` and `npm`. A key in a spread (`...FORM_BASE`) is read by
+ * the type.
  * Edges `renders`: story → screen (`pageEdges`), from `export const X = <pages>("/path")`.
  */
 import { execFile } from "node:child_process";
@@ -47,37 +50,39 @@ const run = promisify(execFile);
 /** The files the last dump read (see the header). */
 const readOf = (root: string) => join(root, "node_modules/.cache/kestrel/ui.inputs.json");
 
+const App = z.object({
+  id: z.string(),
+  name: z.string(),
+  blurb: z.string().optional(),
+  file: z.string().optional(),
+  /** The name the app is exported as: it names an app whose id another app shares. */
+  export: z.string().optional(),
+  /** `team`: Wren's own workspace only. Else a client's. */
+  audience: z.string().optional(),
+  parked: z.boolean().optional(),
+  menu: z.boolean().optional(),
+  pages: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      about: z.string().optional(),
+      group: z.string().optional(),
+      hidden: z.boolean().optional(),
+      template: z.string(),
+      record: z.string().optional(),
+      file: z.string().optional(),
+    }),
+  ),
+});
+
 const Dump = z.object({
   areas: z.record(
     z.string(),
     z.array(z.object({ id: z.string(), label: z.string(), apps: z.array(z.string()) })),
   ),
-  apps: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      blurb: z.string().optional(),
-      file: z.string().optional(),
-      /** The name the app is exported as: it names an app whose id another app shares. */
-      export: z.string().optional(),
-      /** `team`: Wren's own workspace only. Else a client's. */
-      audience: z.string().optional(),
-      parked: z.boolean().optional(),
-      menu: z.boolean().optional(),
-      pages: z.array(
-        z.object({
-          id: z.string(),
-          label: z.string(),
-          about: z.string().optional(),
-          group: z.string().optional(),
-          hidden: z.boolean().optional(),
-          template: z.string(),
-          record: z.string().optional(),
-          file: z.string().optional(),
-        }),
-      ),
-    }),
-  ),
+  apps: z.array(App),
+  /** What the root address `/` draws: an app per workspace, its id unique, path `/`. */
+  home: z.array(App).optional(),
   inputs: z.array(z.string()).optional(),
   /** A client path's first part → the service it reaches. */
   api: z.record(z.string(), z.string()).optional(),
@@ -195,10 +200,12 @@ export function fromDump(
   const count = new Map<string, number>();
   for (const app of d.apps) count.set(app.id, (count.get(app.id) ?? 0) + 1);
   const seen = new Map<string, number>();
-  for (const app of d.apps) {
+  const root = new Set(d.home ?? []);
+  for (const app of [...d.apps, ...(d.home ?? [])]) {
     const n = (seen.get(app.id) ?? 0) + 1;
     seen.set(app.id, n);
-    const key = count.get(app.id) === 1 ? app.id : (app.export ?? `${app.id}~${n}`);
+    const key =
+      root.has(app) || count.get(app.id) === 1 ? app.id : (app.export ?? `${app.id}~${n}`);
     const id = `ui:${key}`;
     const team = app.audience === "team";
     const attrs: Record<string, Attr> = { name: app.name, workspace: team ? "wren" : "client" };
@@ -208,7 +215,7 @@ export function fromDump(
     set(attrs, "areas", at.length ? at : undefined);
     set(attrs, "parked", app.parked);
     set(attrs, "menu", app.menu);
-    set(attrs, "path", `/${app.id}`);
+    set(attrs, "path", root.has(app) ? "/" : `/${app.id}`);
     nodes.push({ id, role: "app", group: key, attrs });
     for (const [i, p] of app.pages.entries()) {
       // Ids sort; the tab order is kept here.
@@ -283,7 +290,8 @@ export function pageEdges(
         .split("/")
         .filter(Boolean);
       const ws = split ? (p.team ? "wren" : "client") : "";
-      for (let i = parts.length; i > 0; i--) {
+      // `/` is the root app's own address only, never a fallback
+      for (let i = parts.length; i >= (parts.length ? 1 : 0); i--) {
         const hit = screen.get(`${ws}\0${parts.slice(0, i).join("/")}`);
         if (!hit) continue;
         to.set(hit, [...(to.get(hit) ?? []), p.id]);
@@ -310,12 +318,19 @@ export function recordTables(
   project: Project,
   fn: string,
   tables: ReadonlySet<string>,
+  /** Filled per kind: what its rows reach outside (an export API's host, a vendor package). */
+  outside?: Map<string, { hosts: string[]; npm: string[] }>,
 ): Map<string, string[]> {
   const read = reader(project, tables);
   const out = new Map<string, string[]>();
-  const at = (o: TsNode | undefined, key: string) => {
-    const p = o && TsNode.isObjectLiteralExpression(o) ? o.getProperty(key) : undefined;
+  const at = (o: TsNode | undefined, key: string): TsNode | undefined => {
+    if (!o) return undefined;
+    // a key not written here comes in a spread (`...FORM_BASE`): its declaration, by the type
+    const p =
+      (TsNode.isObjectLiteralExpression(o) ? o.getProperty(key) : undefined) ??
+      o.getType().getProperty(key)?.getDeclarations()[0];
     if (p && TsNode.isPropertyAssignment(p)) return p.getInitializerOrThrow();
+    if (p && TsNode.isShorthandPropertyAssignment(p)) return p.getNameNode();
     return p && TsNode.isMethodDeclaration(p) ? p : undefined;
   };
   const view = (v: TsNode | undefined) => {
@@ -333,12 +348,16 @@ export function recordTables(
       const id = at(arg, "id")?.getType();
       if (!id?.isStringLiteral()) continue;
       const rows = at(arg, "rows");
+      const r = rows ? read(rows) : undefined;
       const hit = new Set([
         ...view(at(arg, "view")),
         ...view(at(at(arg, "activity"), "view")),
-        ...(rows ? read(rows).tables.keys() : []),
+        ...(r?.tables.keys() ?? []),
       ]);
-      if (hit.size) out.set(String(id.getLiteralValue()), [...hit].sort());
+      const kind = String(id.getLiteralValue());
+      if (hit.size) out.set(kind, [...hit].sort());
+      if (outside && (r?.hosts.size || r?.npm.size))
+        outside.set(kind, { hosts: [...r.hosts].sort(), npm: [...r.npm].sort() });
     }
   }
   return out;
@@ -440,8 +459,14 @@ async function extract(ctx: LayerContext): Promise<Graph> {
   const schema = await ctx.prior("schema");
   const tables = new Set((schema?.nodes ?? []).filter((n) => n.role === "table").map((n) => n.id));
   const { pkgs } = await sourceGlobs(ctx.root, ctx.config.layers.routes?.packages);
-  const kinds = recordTables(tsProject(ctx.root, pkgs), cfg.records, tables);
+  const outside = new Map<string, { hosts: string[]; npm: string[] }>();
+  const kinds = recordTables(tsProject(ctx.root, pkgs), cfg.records, tables, outside);
   const edges = [...g.edges, ...recordReads(g.nodes, kinds)];
+  for (const n of g.nodes) {
+    const o = n.role === "screen" ? outside.get(String(n.attrs?.record)) : undefined;
+    if (o?.hosts.length) n.attrs = { ...n.attrs, hosts: o.hosts };
+    if (o?.npm.length) n.attrs = { ...n.attrs, npm: o.npm };
+  }
   edges.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
   return { ...g, edges };
 }

@@ -9,7 +9,8 @@
  * imports left out. A fact in a bundled file is a link from that unit: an env var the residue
  * maps to a target, an import of a vendor SDK or a sibling repo's package, a Restate service it
  * serves. The file is the link's `here`. A route's own packages (routes attr `npm`) that map to a
- * target give a `uses` edge from the route itself.
+ * target give a `uses` edge from the route itself; an env var its service's factory is handed, a
+ * `calls` edge (`factoryLinks`).
  *
  * Ids: `system:<id>` for a repo or vendor, `system:<repo>.<kind>:<name>` for a unit. Edge kinds:
  * `calls` (env), `uses` (import, package dep), `binds` (Worker binding), `invokes` (Restate).
@@ -278,6 +279,121 @@ export function routeLinks(routes: Graph | null, imports: Facts["imports"]): Lin
   return out;
 }
 
+/** `(`/`{`/`[` at `i` to its match: the text between. Strings and comments are not read. */
+function span(src: string, i: number): string {
+  let depth = 0;
+  for (let j = i; j < src.length; j++) {
+    const c = src[j];
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if ((c === ")" || c === "}" || c === "]") && --depth === 0) return src.slice(i, j + 1);
+  }
+  return src.slice(i);
+}
+
+/** `{ a: x, b, ...c, d() {} }` → its top-level fields, text by key; a spread under `...`. */
+function fields(obj: string): [string, string][] {
+  const out: [string, string][] = [];
+  let depth = 0;
+  let from = 1;
+  for (let j = 1; j < obj.length; j++) {
+    const c = obj[j];
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth--;
+    if ((c === "," && depth === 0) || depth < 0) {
+      const part = obj
+        .slice(from, j)
+        .replace(/^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)+/, "")
+        .trim();
+      const m = /^(\.\.\.)?([A-Za-z_$][\w$]*)\s*(:)?/.exec(part);
+      if (m) out.push([m[1] ? "..." : (m[2] as string), m[1] || !m[3] ? (m[2] as string) : part]);
+      from = j + 1;
+      if (depth < 0) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * Route → target per env var its service is handed. The service's factory (routes attr
+ * `factory`) is called with a deps object: an object literal, or a const the repo defines once
+ * (`makeNotesConsole(notesDeps)`, `const notesDeps = {…}`), its spreads and shorthand fields read
+ * the same way, two levels. A field whose text names an env var, or its settings key, hands it to
+ * each route that reads that field (routes attr `deps`). A factory that reads settings itself is
+ * its unit's fact (`factLinks`).
+ */
+export function factoryLinks(
+  routes: Graph | null,
+  files: ReadonlyMap<string, string>,
+  facts: Facts,
+): Link[] {
+  const vars = Object.entries(facts.env).map(([name, to]) => {
+    const alias = Object.entries(facts.aliases).find(([, v]) => v === name)?.[0];
+    return { name, to, re: new RegExp(`\\b${name}\\b${alias ? `|\\.${alias}\\b` : ""}`) };
+  });
+  const defs = new Map<string, string[]>();
+  const defOf = (w: string) => {
+    let got = defs.get(w);
+    if (!got) {
+      const re = new RegExp(`\\b(?:const|let)\\s+${w}\\s*(?::[^=]+)?=\\s*`, "g");
+      got = [];
+      for (const src of files.values())
+        for (const m of src.matchAll(re)) {
+          const at = (m.index ?? 0) + m[0].length;
+          got.push(
+            "({[".includes(src[at] ?? "_") ? span(src, at) : src.slice(at, src.indexOf(";", at)),
+          );
+        }
+      defs.set(w, got);
+    }
+    return got.length === 1 ? got[0] : undefined;
+  };
+  const bySvc = new Map<string, Node[]>();
+  for (const n of routes?.nodes ?? [])
+    if (n.role === "route" && n.parent) bySvc.set(n.parent, [...(bySvc.get(n.parent) ?? []), n]);
+  const list = (v: Attr | undefined) => (Array.isArray(v) ? (v as readonly string[]) : []);
+  const out: Link[] = [];
+  for (const s of routes?.nodes ?? []) {
+    const f = s.role === "service" ? s.attrs?.factory : undefined;
+    if (typeof f !== "string") continue;
+    const call = new RegExp(`(?<!function\\s+)\\b${f}\\s*(?:<[^()]*>)?\\(`, "g");
+    // deps field → env vars its text names, and the file of the call
+    const by = new Map<string, Map<string, { to: string; here: string }>>();
+    const note = (obj: string | undefined, here: string, depth: number) => {
+      if (!obj?.startsWith("{") || depth > 2) return;
+      for (const [k, text] of fields(obj)) {
+        if (k === "...") {
+          note(defOf(text), here, depth + 1);
+          continue;
+        }
+        const body = /^[A-Za-z_$][\w$]*$/.test(text) ? `${text} ${defOf(text) ?? ""}` : text;
+        for (const v of vars)
+          if (v.re.test(body) || facts.aliases[k] === v.name || k === v.name) {
+            const m = by.get(k) ?? new Map();
+            if (!m.has(v.name)) m.set(v.name, { to: v.to, here });
+            by.set(k, m);
+          }
+      }
+    };
+    for (const [path, src] of files) {
+      if (!src.includes(f)) continue;
+      for (const m of src.matchAll(call)) {
+        const arg = span(src, (m.index ?? 0) + m[0].length - 1)
+          .slice(1, -1)
+          .trim();
+        note(/^[A-Za-z_$][\w$]*$/.test(arg) ? defOf(arg) : arg, path, 0);
+      }
+    }
+    if (!by.size) continue;
+    for (const r of bySvc.get(s.id) ?? []) {
+      const hit = new Map<string, { to: string; here: string }>();
+      for (const k of list(r.attrs?.deps)) for (const [n, x] of by.get(k) ?? []) hit.set(n, x);
+      for (const [name, { to, here }] of hit)
+        out.push({ from: r.id, to, kind: "calls", title: tick(name), here });
+    }
+  }
+  return out;
+}
+
 /** Links from each unit with an entry to what its bundled files name. */
 export function factLinks(
   units: readonly Unit[],
@@ -532,6 +648,7 @@ async function extract(ctx: LayerContext): Promise<Graph> {
     ),
     ...(cfg.restate ? restateLinks(units, imports, routes, cfg.restate) : []),
     ...routeLinks(routes, facts.imports),
+    ...factoryLinks(routes, text, facts),
     ...repoLinks(repos),
   ];
   const { graph, loose } = assemble(repo, units, repos, links, cfg);

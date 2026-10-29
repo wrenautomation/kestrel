@@ -1,14 +1,15 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { Project } from "ts-morph";
+import { Project, SyntaxKind } from "ts-morph";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Config } from "../config.js";
 import type { Graph, Node } from "../graph.js";
 import { api } from "./api.js";
+import { reader } from "./reach.js";
 import { routes } from "./routes.js";
 import { fromTbls, schema } from "./schema.js";
-import { routeLinks, seams, systems } from "./systems.js";
+import { factoryLinks, routeLinks, seams, systems } from "./systems.js";
 import { pageEdges, readStory, recordReads, recordTables, screenCalls } from "./ui.js";
 import { headerLine } from "./workspace.js";
 
@@ -591,6 +592,143 @@ defineRecord({ id: "health.none", rows: () => [] });`,
       { from: "ui:h/day", to: "table:delivery.days", kind: "reads" },
       { from: "ui:h/day", to: "table:public.day_events", kind: "reads" },
       { from: "ui:h/rows", to: "table:public.scores", kind: "reads" },
+    ]);
+  });
+});
+
+describe("record screens, more", () => {
+  it("read a key in a spread, rows by name, and what rows reach outside", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    project.createSourceFile(
+      "/r.ts",
+      `declare function defineRecord(d: object): object;
+const BASE = { id: "sites.form" } as const;
+const rows = (db: { query(s: string): unknown }) => db.query("select * from forms");
+defineRecord({ ...BASE, rows });
+const steps = () => fetch("https://site.example/api/export");
+defineRecord({ id: "marketing.session", rows: steps });`,
+    );
+    const outside = new Map<string, { hosts: string[]; npm: string[] }>();
+    const kinds = recordTables(project, "defineRecord", new Set(["table:public.forms"]), outside);
+    expect([...kinds]).toEqual([["sites.form", ["table:public.forms"]]]);
+    expect([...outside]).toEqual([["marketing.session", { hosts: ["site.example"], npm: [] }]]);
+  });
+});
+
+describe("reach", () => {
+  it("follows a literal into the property a body picks with it, and notes deps fields", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    const f = project.createSourceFile(
+      "/n.ts",
+      `type Db = { query(s: string): unknown };
+function notesApi(deps: { db: Db; files: string }) {
+  return {
+    home: () => deps.db.query("select * from notes"),
+    file: () => deps.files,
+  };
+}
+export function make(deps: { db: Db; files: string }) {
+  const api = notesApi(deps);
+  const read = (route: "home" | "file") => () => api[route]();
+  return { home: read("home"), file: read("file") };
+}`,
+    );
+    const read = reader(project, new Set(["table:public.notes"]), new Set(["db", "files"]));
+    const obj = f
+      .getFunctionOrThrow("make")
+      .getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)[0];
+    const at = (k: string) =>
+      obj
+        ?.getPropertyOrThrow(k)
+        .asKindOrThrow(SyntaxKind.PropertyAssignment)
+        .getInitializerOrThrow();
+    const home = read(at("home") as never);
+    expect([...home.tables.keys()]).toEqual(["table:public.notes"]);
+    expect([...read(at("file") as never).deps]).toContain("files");
+  });
+});
+
+describe("home stories", () => {
+  it("open the root app at `/` and nothing else falls back to it", () => {
+    const nodes: Node[] = [
+      { id: "ui:wrenHome", role: "app", group: "h", attrs: { path: "/", workspace: "wren" } },
+      { id: "ui:clientHome", role: "app", group: "c", attrs: { path: "/", workspace: "client" } },
+      {
+        id: "ui:wrenHome/today",
+        role: "screen",
+        parent: "ui:wrenHome",
+        group: "h",
+        attrs: { order: 0 },
+      },
+      {
+        id: "ui:clientHome/today",
+        role: "screen",
+        parent: "ui:clientHome",
+        group: "c",
+        attrs: { order: 0 },
+      },
+    ];
+    const story = {
+      file: "s.tsx",
+      id: "pages",
+      title: "Pages",
+      shows: [],
+      pages: [
+        { id: "pages--today", at: "/", team: true as const },
+        { id: "pages--client", at: "/?x=1" },
+        { id: "pages--gone", at: "/nowhere" },
+      ],
+    };
+    expect(pageEdges(nodes, [story], true).map((e) => [e.to, e.attrs?.stories])).toEqual([
+      ["ui:wrenHome/today", ["pages--today"]],
+      ["ui:clientHome/today", ["pages--client"]],
+    ]);
+  });
+});
+
+describe("systems factoryLinks", () => {
+  it("hands an env var to the routes that read the deps field naming it", () => {
+    const routes: Graph = {
+      layer: "routes",
+      nodes: [
+        { id: "service:Notes", role: "service", group: "n", attrs: { factory: "makeNotes" } },
+        {
+          id: "route:Notes/file",
+          role: "route",
+          parent: "service:Notes",
+          group: "n",
+          attrs: { deps: ["files"] },
+        },
+        {
+          id: "route:Notes/home",
+          role: "route",
+          parent: "service:Notes",
+          group: "n",
+          attrs: { deps: ["db"] },
+        },
+      ],
+      edges: [],
+    };
+    const files = new Map([
+      [
+        "deps.ts",
+        "const notesDeps = {\n  db,\n  // the bucket\n  files: settings.filesBucket ? s3({ b: 1 }) : undefined,\n};",
+      ],
+      ["apps.ts", "export function makeNotes(d) {}\nconst all = [makeNotes(notesDeps)];"],
+    ]);
+    const facts = {
+      env: { WREN_FILES_BUCKET: "s3:files" },
+      aliases: { filesBucket: "WREN_FILES_BUCKET" },
+      imports: {},
+    };
+    expect(factoryLinks(routes, files, facts)).toEqual([
+      {
+        from: "route:Notes/file",
+        to: "s3:files",
+        kind: "calls",
+        title: "`WREN_FILES_BUCKET`",
+        here: "apps.ts",
+      },
     ]);
   });
 });
