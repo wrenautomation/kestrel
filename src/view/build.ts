@@ -632,6 +632,6 @@ export async function buildView(input: ViewInput): Promise<ViewData> {
     levels: Object.fromEntries(Object.entries(levels).sort(([a], [b]) => a.localeCompare(b))),
     index,
     counts,
-    ...(input.storybook ? { storybook: input.storybook } : {}),
+    ...(input.storybook ? { storybook: input.storybook, dirs } : {}),
   };
 }

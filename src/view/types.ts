@@ -193,6 +193,8 @@ export interface ViewData {
   counts: Record<string, number>;
   /** The Storybook that serves the page stories (`layers.ui.storybook`). */
   storybook?: string;
+  /** Package name → its repo dir (`apps/portal/`), longest dir first: a path to its file box. */
+  dirs?: [string, string][];
 }
 
 /** A card as the view shows it: `covers` are current node ids. */

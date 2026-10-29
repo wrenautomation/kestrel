@@ -124,14 +124,25 @@ const storyName = (id: string) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+/** The file box of a repo path (or one under `root`), by its package's dir. */
+export function boxOfPath(data: ViewData, path: string): string | undefined {
+  const rel = path.startsWith(`${data.root}/`) ? path.slice(data.root.length + 1) : path;
+  const hit = data.dirs?.find(([, d]) => d && rel.startsWith(d));
+  const box = hit && `${hit[0]}/${rel.slice(hit[1].length)}`;
+  return box && data.nodes[box] ? box : undefined;
+}
+
 function Live({
   base,
   ids,
   onCall,
+  onSource,
 }: {
   base: string;
   ids: string[];
   onCall: (key: string) => void;
+  /** Alt+click in the frame: `<path>:<line>:<col>:<tag>`. */
+  onSource: (at: string) => void;
 }) {
   const [at, setAt] = useState(ids[0] as string);
   const box = useRef<HTMLDivElement>(null);
@@ -151,14 +162,15 @@ function Live({
   useEffect(() => {
     const origin = new URL(base).origin;
     const on = (e: MessageEvent) => {
-      if (e.origin === origin && e.data?.kestrel === "call" && typeof e.data.key === "string")
-        onCall(e.data.key);
+      if (e.origin !== origin) return;
+      if (e.data?.kestrel === "call" && typeof e.data.key === "string") onCall(e.data.key);
+      if (e.data?.kestrel === "source" && typeof e.data.at === "string") onSource(e.data.at);
     };
     window.addEventListener("message", on);
     return () => window.removeEventListener("message", on);
-  }, [base, onCall]);
+  }, [base, onCall, onSource]);
   const scale = size.w ? size.w / DRAW : 1;
-  const src = `${base.replace(/\/$/, "")}/iframe.html?id=${encodeURIComponent(at)}&viewMode=story`;
+  const src = `${base.replace(/\/$/, "")}/iframe.html?id=${encodeURIComponent(at)}&viewMode=story&kestrel`;
   return (
     <>
       {ids.length > 1 && (
@@ -189,7 +201,7 @@ function Live({
         >
           Open in Storybook
         </a>
-        . Blank: run <code>storybook</code> in the repo.
+        . <kbd>Alt</kbd>+click a part: its file. Blank: run <code>storybook</code> in the repo.
       </p>
     </>
   );
@@ -211,6 +223,13 @@ export function Slice({ data, id, onGo, onMap }: Props) {
   const onCall = useRef((key: string) =>
     setRan((r) => (r.has(key) ? r : new Set([...r, key]))),
   ).current;
+  // the listener stays put; it reads the latest data and onGo
+  const now = useRef({ data, onGo });
+  now.current = { data, onGo };
+  const onSource = useRef((at: string) => {
+    const box = boxOfPath(now.current.data, at.replace(/(?::\d+){2}:[^:/]*$/, ""));
+    if (box) now.current.onGo(box);
+  }).current;
   if (!n) return null;
   const live = data.storybook && sl?.stories?.length ? sl.stories : undefined;
   const known = new Set((sl?.calls ?? []).flatMap((c) => (c.path ? [c.path] : [])));
@@ -252,7 +271,9 @@ export function Slice({ data, id, onGo, onMap }: Props) {
       </header>
       <div className="cols">
         <section className="col screen">
-          {live && data.storybook && <Live base={data.storybook} ids={live} onCall={onCall} />}
+          {live && data.storybook && (
+            <Live base={data.storybook} ids={live} onCall={onCall} onSource={onSource} />
+          )}
           <h3>Screen</h3>
           <dl className="facts">
             <dt>Template</dt>
