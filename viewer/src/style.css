@@ -460,9 +460,9 @@ code {
 .picking .box:not(.lit, .zoned) {
   opacity: 0.38;
 }
-/* recent work: --hot into the paper, up to 40%; drift keeps the line */
+/* recent work: the box's own hue, stronger with its commits (3% → 40%); drift keeps the line */
 .box.heat {
-  --sk-fill: color-mix(in srgb, var(--hot) calc(var(--heat) * 40%), var(--paper));
+  --sk-fill: color-mix(in srgb, var(--c, var(--ink-3)) calc(3% + var(--heat) * 37%), var(--paper));
 }
 .box.drift-change {
   --sk-line: var(--warn);
